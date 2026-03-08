@@ -1,4 +1,4 @@
-const ALLOWED_SORTS = new Set(['hot', 'new', 'top']);
+﻿const ALLOWED_SORTS = new Set(['hot', 'new', 'top']);
 
 function decodeRedditUrl(value) {
   return typeof value === 'string' ? value.replace(/&amp;/g, '&') : null;
@@ -26,6 +26,20 @@ function getThumbnail(post) {
   const thumb = post?.thumbnail;
   if (thumb && /^https?:\/\//.test(thumb)) return thumb;
   return null;
+}
+
+function getSourceHost(url) {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return null;
+  }
+}
+
+function isRedditHostedHost(hostname) {
+  if (!hostname) return false;
+  return hostname === 'redd.it' || hostname.endsWith('.redd.it') || hostname.endsWith('reddit.com') || hostname.endsWith('redditmedia.com');
 }
 
 function normalizeGallery(post) {
@@ -154,6 +168,9 @@ function normalizeImage(post) {
 export function normalizePost(post) {
   if (!post || post?.is_self) return null;
 
+  const destinationUrl = decodeRedditUrl(post?.url_overridden_by_dest || post?.url);
+  const sourceHost = getSourceHost(destinationUrl);
+
   const base = {
     id: post.id,
     title: post.title || '',
@@ -162,6 +179,8 @@ export function normalizePost(post) {
     subreddit: post.subreddit || '',
     createdUtc: post.created_utc || null,
     score: post.score || 0,
+    numComments: post.num_comments || 0,
+    flair: post.link_flair_text || null,
     nsfw: Boolean(post.over_18),
     thumbnail: getThumbnail(post),
     mediaUrl: null,
@@ -172,6 +191,8 @@ export function normalizePost(post) {
     videoAudioUrls: [],
     videoHasAudio: null,
     videoDurationSec: null,
+    sourceHost,
+    isRedditHosted: isRedditHostedHost(sourceHost),
     type: null
   };
 
@@ -231,3 +252,4 @@ export function sanitizeLimit(limit) {
   if (Number.isNaN(parsed)) return 25;
   return Math.min(100, Math.max(1, parsed));
 }
+

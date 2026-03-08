@@ -5,7 +5,10 @@ function GalleryCard({ post, onOpen }) {
   const preview = getCardPreview(post);
   const isInstagram = post.source === 'instagram';
   const isYouTube = post.source === 'youtube';
+  const isReddit = post.source === 'reddit';
   const duration = post.type === 'video' ? formatDuration(post.videoDurationSec) : null;
+  const flair = isReddit && post.flair ? post.flair : null;
+  const host = isReddit && post.sourceHost && !post.isRedditHosted ? post.sourceHost : null;
 
   return (
     <article className="media-card" onClick={() => onOpen(post)}>
@@ -26,10 +29,25 @@ function GalleryCard({ post, onOpen }) {
         <p className="meta-line">
           {isInstagram ? `@${post.author}` : isYouTube ? `YouTube - ${post.author}` : `r/${post.subreddit} - u/${post.author}`}
         </p>
+
+        {isReddit && (flair || host || post.isRedditHosted) && (
+          <div className="meta-chip-row">
+            {flair && <span className="meta-chip meta-chip-flair">{flair}</span>}
+            {host && <span className="meta-chip">{host}</span>}
+            {post.isRedditHosted && <span className="meta-chip meta-chip-hosted">Reddit-hosted</span>}
+          </div>
+        )}
+
         <p className="meta-line">
           {isInstagram ? formatPostDate(post.createdUtc) : `${formatScore(post.score)} ${isYouTube ? 'views' : 'upvotes'} - ${formatPostDate(post.createdUtc)}`}
           {duration ? ` - ${duration}` : ''}
         </p>
+
+        {isReddit && (
+          <p className="meta-line meta-line-secondary">
+            {formatScore(post.numComments || 0)} comments
+          </p>
+        )}
       </div>
     </article>
   );

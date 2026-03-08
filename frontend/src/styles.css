@@ -241,8 +241,8 @@ body {
 
 .gallery-grid {
   display: grid;
-  gap: 14px;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
 }
 
 .media-card {
@@ -316,6 +316,26 @@ body {
 
 .media-card-body {
   padding: 10px 11px 12px;
+}
+
+.media-card-body h3 {
+  margin: 0 0 8px;
+  font-size: 0.96rem;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.meta-line {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.meta-line + .meta-line {
+  margin-top: 6px;
 }
 
 .media-card-body h3 {
@@ -785,3 +805,126 @@ body {
 }
 
 
+.advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.advanced-grid-wide {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.advanced-grid input,
+.advanced-grid select,
+.search-memory-row button,
+.memory-chip,
+.memory-chip-remove {
+  border-radius: 10px;
+  border: 1px solid var(--card-border);
+  background: var(--bg-elev-strong);
+  color: var(--text);
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.reddit-toggles-row {
+  justify-content: flex-start;
+}
+
+.search-memory-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.memory-group {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.memory-chip-wrap {
+  display: inline-flex;
+  align-items: stretch;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid rgba(94, 200, 255, 0.22);
+}
+
+.memory-chip,
+.memory-chip-remove {
+  border: 0;
+  background: rgba(94, 200, 255, 0.1);
+}
+
+.memory-chip {
+  padding-right: 10px;
+}
+
+.memory-chip-remove {
+  padding-left: 10px;
+  min-width: 38px;
+}
+
+.mini-muted {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.meta-chip-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 7px 0 2px;
+}
+
+.meta-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  line-height: 1;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--muted);
+}
+
+.meta-chip-flair {
+  color: #ffe3b1;
+  border-color: rgba(255, 195, 113, 0.25);
+  background: rgba(255, 195, 113, 0.12);
+}
+
+.meta-chip-hosted {
+  color: #aee7ff;
+  border-color: rgba(94, 200, 255, 0.28);
+}
+
+.meta-line-secondary {
+  color: var(--muted);
+}
+
+@media (max-width: 1100px) {
+  .advanced-grid,
+  .advanced-grid-wide {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .advanced-grid,
+  .advanced-grid-wide {
+    grid-template-columns: 1fr;
+  }
+
+  .search-memory-row {
+    align-items: stretch;
+  }
+
+  .memory-group {
+    width: 100%;
+  }
+}

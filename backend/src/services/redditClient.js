@@ -1,23 +1,34 @@
-import { sanitizeLimit, sanitizeSort } from '../utils/normalizePost.js';
+﻿import { sanitizeLimit, sanitizeSort } from '../utils/normalizePost.js';
 
 const DEFAULT_BASE_URL = 'https://www.reddit.com';
 const DEFAULT_GRAPH_BASE_URL = 'https://graph.facebook.com/v23.0';
+const ALLOWED_TIME_RANGES = new Set(['hour', 'day', 'week', 'month', 'year', 'all']);
 
-function buildListingUrl({ subreddit, sort, after, limit }) {
+function sanitizeTimeRange(value) {
+  return ALLOWED_TIME_RANGES.has(value) ? value : 'all';
+}
+
+function buildListingUrl({ subreddit, sort, after, limit, timeRange, query }) {
   const baseUrl = process.env.REDDIT_BASE_URL || DEFAULT_BASE_URL;
-  const url = new URL(`/r/${subreddit}/${sort}.json`, baseUrl);
+  const safeSubreddit = (subreddit || '').trim();
+  const hasQuery = Boolean((query || '').trim());
+  const pathname = hasQuery ? `/r/${safeSubreddit}/search.json` : `/r/${safeSubreddit}/${sort}.json`;
+  const url = new URL(pathname, baseUrl);
   url.searchParams.set('raw_json', '1');
   url.searchParams.set('limit', String(limit));
-  if (after) {
-    url.searchParams.set('after', after);
+  if (after) url.searchParams.set('after', after);
+  if (hasQuery) {
+    url.searchParams.set('q', query.trim());
+    url.searchParams.set('restrict_sr', 'on');
+    url.searchParams.set('sort', sort);
   }
-  if (sort === 'top') {
-    url.searchParams.set('t', 'all');
+  if (sort === 'top' || hasQuery) {
+    url.searchParams.set('t', sanitizeTimeRange(timeRange));
   }
   return url.toString();
 }
 
-function buildUserListingUrl({ username, sort, after, limit }) {
+function buildUserListingUrl({ username, sort, after, limit, timeRange }) {
   const baseUrl = process.env.REDDIT_BASE_URL || DEFAULT_BASE_URL;
   const url = new URL(`/user/${username}/submitted/${sort}.json`, baseUrl);
   url.searchParams.set('raw_json', '1');
@@ -26,7 +37,7 @@ function buildUserListingUrl({ username, sort, after, limit }) {
     url.searchParams.set('after', after);
   }
   if (sort === 'top') {
-    url.searchParams.set('t', 'all');
+    url.searchParams.set('t', sanitizeTimeRange(timeRange));
   }
   return url.toString();
 }
@@ -74,18 +85,18 @@ async function fetchJson(url, options = {}) {
   return response.json();
 }
 
-export async function fetchSubredditListing({ subreddit, sort, after, limit }) {
+export async function fetchSubredditListing({ subreddit, sort, after, limit, timeRange, query }) {
   const safeSort = sanitizeSort(sort);
   const safeLimit = sanitizeLimit(limit);
-  const url = buildListingUrl({ subreddit, sort: safeSort, after, limit: safeLimit });
+  const url = buildListingUrl({ subreddit, sort: safeSort, after, limit: safeLimit, timeRange, query });
   return fetchJson(url);
 }
 
-export async function fetchUserSubmittedListing({ username, sort, after, limit }) {
+export async function fetchUserSubmittedListing({ username, sort, after, limit, timeRange }) {
   const safeSort = sanitizeSort(sort);
   const safeLimit = sanitizeLimit(limit);
   const safeUser = (username || '').trim();
-  const url = buildUserListingUrl({ username: safeUser, sort: safeSort, after, limit: safeLimit });
+  const url = buildUserListingUrl({ username: safeUser, sort: safeSort, after, limit: safeLimit, timeRange });
   return fetchJson(url);
 }
 

@@ -6,6 +6,9 @@ import { fetchInstagramMedia, fetchRedditUserMedia, fetchSimpcityMedia, fetchSub
 import { NSFW_DIRECTORY, NSFW_TOP_PICKS } from './utils/nsfwDirectory';
 
 const LAST_SUBREDDIT_KEY = 'subreddit-media-viewer:last-subreddit';
+const LAST_REDDIT_FILTERS_KEY = 'subreddit-media-viewer:last-reddit-filters';
+const REDDIT_SAVED_SEARCHES_KEY = 'subreddit-media-viewer:reddit-saved-searches';
+const REDDIT_RECENT_SEARCHES_KEY = 'subreddit-media-viewer:reddit-recent-searches';
 const LAST_IG_KEY = 'subreddit-media-viewer:last-instagram-user';
 const LAST_YT_KEY = 'subreddit-media-viewer:last-youtube-query';
 const LAST_SC_KEY = 'subreddit-media-viewer:last-simpcity-path';
@@ -13,6 +16,18 @@ const MEDIA_PAGE_SIZE_REDDIT = 48;
 const MEDIA_PAGE_SIZE_IG = 24;
 const MEDIA_PAGE_SIZE_YT = 24;
 const MEDIA_PAGE_SIZE_SC = 18;
+
+const DEFAULT_REDDIT_FILTERS = {
+  keyword: '',
+  includeTerms: '',
+  excludeTerms: '',
+  timeRange: 'all',
+  searchScope: 'title',
+  flair: '',
+  minScore: 0,
+  onlyRedditHosted: false,
+  suppressDuplicates: true
+};
 
 const YOUTUBE_ASMR_CATEGORIES = [
   { label: 'All ASMR', value: '' },
@@ -159,6 +174,48 @@ function buildSimpcityQuery(input) {
 
   return { path: '/search/', query: value };
 }
+function parseStoredJson(key, fallback) {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function makeSearchLabel(subreddit, filters) {
+  const parts = [subreddit];
+  if (filters.keyword) parts.push(filters.keyword);
+  if (filters.flair) parts.push(`flair:${filters.flair}`);
+  if (filters.minScore) parts.push(`score>=${filters.minScore}`);
+  if (filters.onlyRedditHosted) parts.push('hosted');
+  return parts.join(' | ');
+}
+
+function compareScore(a, b) {
+  return (b.score || 0) - (a.score || 0);
+}
+
+function compareComments(a, b) {
+  return (b.numComments || 0) - (a.numComments || 0);
+}
+
+function compareBalanced(a, b) {
+  const now = Date.now() / 1000;
+  const scoreA = ((a.score || 0) + (a.numComments || 0) * 2) / Math.max(2, (now - (a.createdUtc || now)) / 3600);
+  const scoreB = ((b.score || 0) + (b.numComments || 0) * 2) / Math.max(2, (now - (b.createdUtc || now)) / 3600);
+  return scoreB - scoreA;
+}
+
+function dedupeItems(items) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = item.mediaUrl || item.videoUrl || `${item.title}|${item.author}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 function compareNewest(a, b) {
   return (b.createdUtc || 0) - (a.createdUtc || 0);
 }
@@ -197,6 +254,10 @@ function App() {
   const [includeNsfw, setIncludeNsfw] = useState(false);
   const [mediaFilter, setMediaFilter] = useState('all');
   const [order, setOrder] = useState('newest');
+  const [redditFilters, setRedditFilters] = useState(() => ({ ...DEFAULT_REDDIT_FILTERS, ...parseStoredJson(LAST_REDDIT_FILTERS_KEY, {}) }));
+  const [redditAvailableFlairs, setRedditAvailableFlairs] = useState([]);
+  const [redditSavedSearches, setRedditSavedSearches] = useState(() => parseStoredJson(REDDIT_SAVED_SEARCHES_KEY, []));
+  const [redditRecentSearches, setRedditRecentSearches] = useState(() => parseStoredJson(REDDIT_RECENT_SEARCHES_KEY, []));
   const [items, setItems] = useState([]);
   const [after, setAfter] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -224,6 +285,18 @@ function App() {
   }, [simpcityPath]);
 
   useEffect(() => {
+    localStorage.setItem(LAST_REDDIT_FILTERS_KEY, JSON.stringify(redditFilters));
+  }, [redditFilters]);
+
+  useEffect(() => {
+    localStorage.setItem(REDDIT_SAVED_SEARCHES_KEY, JSON.stringify(redditSavedSearches));
+  }, [redditSavedSearches]);
+
+  useEffect(() => {
+    localStorage.setItem(REDDIT_RECENT_SEARCHES_KEY, JSON.stringify(redditRecentSearches));
+  }, [redditRecentSearches]);
+
+  useEffect(() => {
     let isCancelled = false;
 
     async function loadInitial() {
@@ -238,11 +311,29 @@ function App() {
             if (isCancelled) return;
             setItems(data.items || []);
             setAfter(data.after || null);
+            setRedditAvailableFlairs([]);
           } else {
-            const data = await fetchSubredditMedia({ subreddit, sort, includeNsfw, after: null, limit: MEDIA_PAGE_SIZE_REDDIT });
+            const data = await fetchSubredditMedia({
+              subreddit,
+              sort,
+              includeNsfw,
+              after: null,
+              limit: MEDIA_PAGE_SIZE_REDDIT,
+              timeRange: redditFilters.timeRange,
+              keyword: redditFilters.keyword,
+              includeTerms: redditFilters.includeTerms,
+              excludeTerms: redditFilters.excludeTerms,
+              flair: redditFilters.flair,
+              minScore: redditFilters.minScore,
+              onlyRedditHosted: redditFilters.onlyRedditHosted,
+              searchScope: redditFilters.searchScope
+            });
             if (isCancelled) return;
             setItems(data.items || []);
             setAfter(data.after || null);
+            setRedditAvailableFlairs(data.availableFlairs || []);
+            const label = makeSearchLabel(subreddit, redditFilters);
+            setRedditRecentSearches((prev) => [{ id: label, label, subreddit, filters: redditFilters }, ...prev.filter((item) => item.id !== label)].slice(0, 8));
           }
         } else if (source === 'instagram') {
           const targetUser = authorView?.source === 'instagram' ? authorView.username : instagramUsername;
@@ -282,17 +373,22 @@ function App() {
     return () => {
       isCancelled = true;
     };
-  }, [source, subreddit, sort, includeNsfw, instagramUsername, youtubeQuery, youtubeCategory, youtubeOrder, simpcityPath, authorView]);
+  }, [source, subreddit, sort, includeNsfw, instagramUsername, youtubeQuery, youtubeCategory, youtubeOrder, simpcityPath, authorView, redditFilters]);
 
   const filteredItems = useMemo(() => {
-    if (mediaFilter === 'images') return items.filter((item) => item.type === 'image' || item.type === 'gallery');
-    if (mediaFilter === 'videos') return items.filter((item) => item.type === 'video');
-    return items;
-  }, [items, mediaFilter]);
+    let next = items;
+    if (mediaFilter === 'images') next = next.filter((item) => item.type === 'image' || item.type === 'gallery');
+    if (mediaFilter === 'videos') next = next.filter((item) => item.type === 'video');
+    if (source === 'reddit' && redditFilters.suppressDuplicates) next = dedupeItems(next);
+    return next;
+  }, [items, mediaFilter, source, redditFilters.suppressDuplicates]);
 
   const displayItems = useMemo(() => {
     const copy = [...filteredItems];
     if (order === 'oldest') return copy.sort(compareOldest);
+    if (order === 'score') return copy.sort(compareScore);
+    if (order === 'comments') return copy.sort(compareComments);
+    if (order === 'balanced') return copy.sort(compareBalanced);
     if (order === 'longest') return copy.sort((a, b) => compareVideoLength(a, b, 'desc'));
     if (order === 'shortest') return copy.sort((a, b) => compareVideoLength(a, b, 'asc'));
     return copy.sort(compareNewest);
@@ -365,9 +461,24 @@ function App() {
           setItems((prev) => [...prev, ...(data.items || [])]);
           setAfter(data.after || null);
         } else {
-          const data = await fetchSubredditMedia({ subreddit, sort, includeNsfw, after, limit: MEDIA_PAGE_SIZE_REDDIT });
+          const data = await fetchSubredditMedia({
+            subreddit,
+            sort,
+            includeNsfw,
+            after,
+            limit: MEDIA_PAGE_SIZE_REDDIT,
+            timeRange: redditFilters.timeRange,
+            keyword: redditFilters.keyword,
+            includeTerms: redditFilters.includeTerms,
+            excludeTerms: redditFilters.excludeTerms,
+            flair: redditFilters.flair,
+            minScore: redditFilters.minScore,
+            onlyRedditHosted: redditFilters.onlyRedditHosted,
+            searchScope: redditFilters.searchScope
+          });
           setItems((prev) => [...prev, ...(data.items || [])]);
           setAfter(data.after || null);
+          setRedditAvailableFlairs(data.availableFlairs || []);
         }
       } else if (source === 'instagram') {
         const targetUser = authorView?.source === 'instagram' ? authorView.username : instagramUsername;
@@ -474,6 +585,28 @@ function App() {
     }, 700);
   }
 
+  function handleRedditFilterChange(key, value) {
+    setAuthorView(null);
+    setRedditFilters((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function handleSaveRedditSearch() {
+    const id = `${subreddit}|${JSON.stringify(redditFilters)}`;
+    const label = makeSearchLabel(subreddit, redditFilters);
+    setRedditSavedSearches((prev) => [{ id, label, subreddit, filters: redditFilters }, ...prev.filter((item) => item.id !== id)].slice(0, 12));
+  }
+
+  function applyRedditSearch(search) {
+    setSource('reddit');
+    setAuthorView(null);
+    setRedditInput(search.subreddit);
+    setSubreddit(search.subreddit);
+    setRedditFilters(search.filters);
+  }
+
+  function removeRedditSearch(id) {
+    setRedditSavedSearches((prev) => prev.filter((item) => item.id !== id));
+  }
   function handlePickNsfwSubreddit(name) {
     setSource('reddit');
     setAuthorView(null);
@@ -552,6 +685,10 @@ function App() {
         youtubeCategory={youtubeCategory}
         youtubeCategories={YOUTUBE_ASMR_CATEGORIES}
         youtubeOrder={youtubeOrder}
+        redditFilters={redditFilters}
+        redditAvailableFlairs={redditAvailableFlairs}
+        redditSavedSearches={redditSavedSearches}
+        redditRecentSearches={redditRecentSearches}
         onSourceChange={(nextSource) => {
           setAuthorView(null);
           setSource(nextSource);
@@ -564,6 +701,10 @@ function App() {
         onOrderChange={setOrder}
         onYoutubeCategoryChange={setYoutubeCategory}
         onYoutubeOrderChange={setYoutubeOrder}
+        onRedditFilterChange={handleRedditFilterChange}
+        onSaveRedditSearch={handleSaveRedditSearch}
+        onApplyRedditSearch={applyRedditSearch}
+        onRemoveRedditSearch={removeRedditSearch}
       />
 
       <div className={`content-layout ${source === 'instagram' ? 'instagram-layout' : ''}`}>
@@ -705,6 +846,16 @@ function App() {
 }
 
 export default App;
+
+
+
+
+
+
+
+
+
+
 
 
 
