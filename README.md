@@ -1,42 +1,82 @@
-﻿# Subreddit Media Viewer
+# Nightfeed
 
-A polished full-stack app for browsing image and video media from Reddit, Instagram, and YouTube.
+Nightfeed is a full-stack media browser for Reddit, Instagram, and indexed public SimpCity content.
 
 ## Stack
 
 - Frontend: React + Vite
 - Backend: Node.js + Express
-- Styling: custom CSS (dark mode first, glassy cards)
+- Storage: SQLite (`node:sqlite`) for SimpCity indexing cache
+- Styling: custom CSS, dark-first UI
 
 ## Features
 
-- Search subreddit (`pics`, `aww`, `wallpapers`, etc.)`r`n- Browse Instagram creator media`r`n- Browse YouTube ASMR categories and queries`r`n- Sort Reddit by `hot`, `new`, or `top`
-- Media filters: all / images / videos
-- Include or exclude NSFW posts
-- Responsive media gallery with metadata
-- Modal viewer with:
-  - image viewing
-  - gallery navigation
-  - inline video playback
-  - keyboard controls (Esc, Left, Right)
-- Pagination via `Load more`
-- Copy Reddit post link
-- Open original Reddit post
-- Download button for safe direct media URLs
-- Loading, empty, and error states
-- Remembers last searched subreddit in `localStorage`
+- Reddit browsing with `hot`, `new`, and `top`
+- Reddit keyword, flair, include/exclude term, score, and host filters
+- Instagram media browsing
+- SimpCity public-content index with preserved forum hierarchy:
+  - Category
+  - Section
+  - Thread
+  - Media
+- Responsive media grid and split modal viewer
+- Infinite scroll for feeds
+- Thread detail browsing for SimpCity
+- Saved/recent Reddit searches
+- Local persistence for feed state and filters
+
+## SimpCity Index Flow
+
+Nightfeed does not scrape SimpCity live on every page load.
+
+Instead it uses a cached index pipeline:
+
+1. Crawl publicly accessible forum index/listing pages
+2. Extract SimpCity categories and sections
+3. Crawl public thread lists for each indexed section
+4. Parse thread pages for:
+   - inline images
+   - inline videos
+   - public outbound host links
+5. Resolve supported public hosts through modular resolvers
+6. Store normalized thread/media records in SQLite
+7. Serve the frontend from cached indexed results
+
+That keeps the UI fast and avoids tying normal browsing to a live crawl on every request.
+
+## Public-content constraints
+
+The SimpCity implementation is intentionally limited to publicly accessible content.
+
+- No login-wall bypassing
+- No anti-bot bypassing
+- No private-content handling
+- External hosts are resolved only through normal public page parsing
 
 ## Project Structure
 
 ```text
 .
 +- backend/
+|  +- data/
+|  |  +- simpcity.sqlite
 |  +- src/
 |  |  +- routes/
+|  |  |  +- instagram.js
+|  |  |  +- nsfw.js
+|  |  |  +- reddit.js
+|  |  |  +- simpcity.js
 |  |  |  +- subreddit.js
+|  |  |  +- user.js
 |  |  +- services/
 |  |  |  +- redditClient.js
+|  |  |  +- simpcity/
+|  |  |  |  +- resolveBunkr.js
+|  |  |  |  +- resolveGofile.js
+|  |  |  +- simpcityCrawler.js
+|  |  |  +- simpcityDb.js
 |  |  +- utils/
+|  |  |  +- normalizeInstagram.js
 |  |  |  +- normalizePost.js
 |  |  +- app.js
 |  |  +- server.js
@@ -49,10 +89,13 @@ A polished full-stack app for browsing image and video media from Reddit, Instag
 |  |  |  +- GalleryGrid.jsx
 |  |  |  +- LightboxModal.jsx
 |  |  |  +- SearchControls.jsx
+|  |  |  +- SimpcityThreadList.jsx
+|  |  |  +- VideoPlayer.jsx
 |  |  +- utils/
 |  |  |  +- api.js
 |  |  |  +- format.js
 |  |  |  +- media.js
+|  |  |  +- nsfwDirectory.js
 |  |  +- App.jsx
 |  |  +- main.jsx
 |  |  +- styles.css
@@ -66,7 +109,7 @@ A polished full-stack app for browsing image and video media from Reddit, Instag
 
 ## Setup
 
-1. Install dependencies from repo root:
+1. Install dependencies from the repo root:
 
 ```bash
 npm install
@@ -77,13 +120,13 @@ npm install
 - `backend/.env` from `backend/.env.example`
 - `frontend/.env` from `frontend/.env.example`
 
-3. Start both backend and frontend:
+3. Start backend and frontend together:
 
 ```bash
 npm run dev
 ```
 
-4. Open app at:
+4. Open the app:
 
 - Frontend: `http://localhost:5173`
 - Backend: `http://localhost:3001`
@@ -94,109 +137,90 @@ npm run dev
 
 - `PORT` (default `3001`)
 - `REDDIT_BASE_URL` (default `https://www.reddit.com`)
-- `REDDIT_USER_AGENT` (set a descriptive value)
-- `REDDIT_CLIENT_ID` (optional, for future OAuth mode)
-- `REDDIT_CLIENT_SECRET` (optional, for future OAuth mode)`r`n- `YOUTUBE_API_KEY` (required for YouTube tab)
+- `REDDIT_USER_AGENT` (recommended for polite Reddit requests)
+- `INSTAGRAM_GRAPH_BASE_URL`
+- `INSTAGRAM_APP_USER_ID`
+- `INSTAGRAM_ACCESS_TOKEN`
+- `SIMPCITY_BASE_URL`
+- `SIMPCITY_COOKIE` (optional, only if public pages still require a normal session cookie on your own machine)
 
 ### frontend/.env
 
 - `VITE_API_BASE_URL` (default `http://localhost:3001`)
 
+## SimpCity Data Model
+
+SQLite tables used for the index:
+
+- `simpcity_categories`
+- `simpcity_sections`
+- `simpcity_threads`
+- `simpcity_tags`
+- `simpcity_thread_tags`
+- `simpcity_media_items`
+- `crawl_jobs`
+
 ## API
 
-### `GET /api/subreddit/:name`
+### Reddit
+
+`GET /api/subreddit/:name`
 
 Query params:
 
-- `sort`: `hot | new | top` (default `hot`)
+- `sort`: `hot | new | top`
 - `after`: Reddit pagination cursor
-- `limit`: 1-100 (default 25)
-- `includeNsfw`: `true | false` (default `false`)
+- `limit`: 1-100
+- `includeNsfw`: `true | false`
+- `timeRange`: `hour | day | week | month | year | all`
+- `keyword`: subreddit search query
+- `includeTerms`: comma-separated required terms
+- `excludeTerms`: comma-separated excluded terms
+- `flair`: exact flair match
+- `minScore`: minimum upvote score
+- `onlyRedditHosted`: restrict to Reddit-hosted media
+- `searchScope`: `title | title_flair | post`
 
-Example:
+### SimpCity
 
-```bash
-GET /api/subreddit/pics?sort=hot&after=t3_abc123&includeNsfw=false
-```
+- `GET /api/simpcity/sidebar`
+- `GET /api/simpcity/tags`
+- `GET /api/simpcity/threads`
+- `GET /api/simpcity/media`
+- `GET /api/simpcity/thread/:id`
+- `POST /api/simpcity/crawl`
 
-Response:
+Supported SimpCity filters include:
 
-```json
-{
-  "subreddit": "pics",
-  "sort": "hot",
-  "after": "t3_xyz",
-  "count": 25,
-  "items": [
-    {
-      "id": "abc123",
-      "title": "...",
-      "permalink": "https://www.reddit.com/r/pics/comments/...",
-      "author": "username",
-      "subreddit": "pics",
-      "createdUtc": 1700000000,
-      "score": 1234,
-      "nsfw": false,
-      "type": "image",
-      "thumbnail": "https://...",
-      "mediaUrl": "https://i.redd.it/...jpg",
-      "galleryItems": [],
-      "videoUrl": null
-    }
-  ]
-}
-```
+- `category`
+- `section`
+- `tag`
+- `author`
+- `search`
+- `mediaType`
+- `sourceHost`
 
-## Reddit Media Detection Notes
+## Reddit Media Handling
 
-The backend normalizer converts Reddit post JSON into a unified media model:
+The Reddit browser intentionally uses public Reddit listing JSON.
 
-- Image posts:
-  - uses `post_hint=image`
-  - falls back to image-like `url_overridden_by_dest` / `url`
-  - uses `preview.images[0]` for thumbnail fallback
-- Gallery posts:
-  - reads `gallery_data.items`
-  - maps each `media_id` using `media_metadata`
-  - decodes Reddit escaped URLs (`&amp;`)
-  - stores all gallery media in `galleryItems`
-- Video posts:
-  - uses `secure_media.reddit_video.fallback_url` when present
-  - also supports `preview.reddit_video_preview.fallback_url` for GIF-like previews
-- Skipping unsupported content:
-  - external embeds and non-direct links are ignored to avoid broken media
+### What works well in-app
+
+- Direct images
+- Reddit galleries
+- Reddit preview-friendly video browsing
+
+### Preview Video behavior
+
+Public Reddit listing responses often expose preview-oriented video streams more reliably than full post playback metadata. Nightfeed treats that as a browsing-first experience:
+
+- preview streams remain playable in-app when available
+- the modal keeps a clear `Open on Reddit` path
+- the UI presents this as an intentional limitation of public Reddit data, not a broken player
 
 ## Limitations
 
-- The app prioritizes Reddit-hosted/direct media URLs and intentionally skips many third-party embeds.
-- Historical completeness depends on Reddit listing behavior and selected sort mode.
-- Some GIF-like content is delivered as MP4; behavior depends on the source URL availability.
-- Public Reddit JSON endpoints may be rate-limited. OAuth can be added later by swapping logic in `backend/src/services/redditClient.js`.
-
-## SimpCity Source (Best Effort)
-
-A fourth source tab is available: SimpCity.
-
-Endpoints:
-
-- GET /api/simpcity/feed?path=/whats-new/posts/&after=2&limit=18
-- GET /api/simpcity/feed?q=keyword&after=2&limit=18
-
-Query params:
-
-- path: SimpCity relative path or URL to browse (default /whats-new/posts/)
-- q / query: keyword search across forum listings
-- fter: page number for pagination
-- limit: number of normalized media cards to return
-
-Environment:
-
-- SIMPCITY_BASE_URL (default https://simpcity.cr)
-- SIMPCITY_COOKIE (optional; helps for logged-in browsing)
-
-Notes:
-
-- The SimpCity route supports both path browsing and keyword search.
-- It resolves direct media from thread links, including best-effort extraction for Gofile and Bunkr URLs when direct media links can be discovered.
-- Some pages may still block automation with Cloudflare/CAPTCHA or require additional account permissions.
-- Author-gallery expansion is not available for SimpCity posts in this build.
+- SimpCity indexing is best-effort and depends on public accessibility of the target pages
+- External hosts may remove or rate-limit public media pages over time
+- Reddit-hosted video metadata remains limited through public listing endpoints
+- Unsupported embeds are intentionally skipped to keep the browsing experience stable

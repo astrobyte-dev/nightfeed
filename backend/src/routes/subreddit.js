@@ -1,4 +1,4 @@
-﻿import express from 'express';
+import express from 'express';
 import { fetchSubredditListing } from '../services/redditClient.js';
 import { normalizePost, sanitizeLimit, sanitizeSort } from '../utils/normalizePost.js';
 

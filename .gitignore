@@ -13,3 +13,8 @@ npm-debug.log*
 
 launcher_build/
 *.log
+
+backend/data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

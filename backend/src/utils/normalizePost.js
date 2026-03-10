@@ -1,4 +1,4 @@
-﻿const ALLOWED_SORTS = new Set(['hot', 'new', 'top']);
+const ALLOWED_SORTS = new Set(['hot', 'new', 'top']);
 
 function decodeRedditUrl(value) {
   return typeof value === 'string' ? value.replace(/&amp;/g, '&') : null;
@@ -18,6 +18,11 @@ function getPreviewImage(post) {
   const images = post?.preview?.images;
   if (!Array.isArray(images) || images.length === 0) return null;
   return decodeRedditUrl(images[0]?.source?.url);
+}
+
+function getPostVariants(post) {
+  const crossposts = Array.isArray(post?.crosspost_parent_list) ? post.crosspost_parent_list : [];
+  return [post, ...crossposts].filter(Boolean);
 }
 
 function getThumbnail(post) {
@@ -70,91 +75,209 @@ function normalizeGallery(post) {
   return items.length ? items : null;
 }
 
-function collectRedditVideoCandidates(post) {
-  const cross = Array.isArray(post?.crosspost_parent_list) ? post.crosspost_parent_list : [];
-  return [
-    post?.secure_media?.reddit_video,
-    post?.media?.reddit_video,
-    ...cross.map((item) => item?.secure_media?.reddit_video),
-    ...cross.map((item) => item?.media?.reddit_video),
-    post?.preview?.reddit_video_preview
-  ].filter(Boolean);
-}
-
 function parseHasAudio(value) {
   if (value === true) return true;
   if (value === false) return false;
   return null;
 }
 
-function buildRedditAudioCandidates({ fallbackUrl, dashUrl }) {
-  const rawSources = [fallbackUrl, dashUrl].filter(Boolean);
-  const filenames = ['DASH_AUDIO_192.mp4', 'DASH_AUDIO_128.mp4', 'DASH_AUDIO_96.mp4', 'DASH_AUDIO_64.mp4', 'DASH_audio.mp4', 'audio'];
-  const results = [];
+function extractRedditVideoBase(url) {
+  if (!url) return null;
 
-  for (const raw of rawSources) {
-    try {
-      const parsed = new URL(raw);
-      if (parsed.hostname !== 'v.redd.it') continue;
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname !== 'v.redd.it') return null;
 
-      const dashIndex = parsed.pathname.indexOf('/DASH_');
-      const playlistIndex = parsed.pathname.indexOf('/DASHPlaylist');
-      const splitIndex = dashIndex >= 0 ? dashIndex : playlistIndex;
-      if (splitIndex < 0) continue;
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    if (segments.length === 0) return null;
+    return `${parsed.origin}/${segments[0]}`;
+  } catch {
+    return null;
+  }
+}
 
-      const basePath = parsed.pathname.slice(0, splitIndex);
-      for (const filename of filenames) {
-        const variants = [`${parsed.origin}${basePath}/${filename}${parsed.search}`, `${parsed.origin}${basePath}/${filename}`];
-        for (const candidate of variants) {
-          if (!results.includes(candidate)) results.push(candidate);
-        }
+function appendSearchParams(url, sourceUrl) {
+  if (!url || !sourceUrl) return url;
+
+  try {
+    const source = new URL(sourceUrl);
+    const target = new URL(url);
+    source.searchParams.forEach((value, key) => {
+      if (!target.searchParams.has(key)) {
+        target.searchParams.set(key, value);
       }
-    } catch {
-      // Ignore invalid URLs.
+    });
+    return target.toString();
+  } catch {
+    return url;
+  }
+}
+
+function buildRedditAudioCandidates(video) {
+  const fallbackUrl = decodeRedditUrl(video?.fallback_url);
+  const hlsUrl = decodeRedditUrl(video?.hls_url);
+  const dashUrl = decodeRedditUrl(video?.dash_url);
+  const baseUrl = extractRedditVideoBase(fallbackUrl) || extractRedditVideoBase(hlsUrl) || extractRedditVideoBase(dashUrl);
+
+  if (!baseUrl) return [];
+
+  const candidateNames = ['DASH_AUDIO_128.mp4', 'DASH_AUDIO_64.mp4', 'DASH_AUDIO.mp4'];
+  return candidateNames.map((name) => appendSearchParams(`${baseUrl}/${name}`, fallbackUrl || dashUrl || hlsUrl));
+}
+
+function extractEmbedSrc(html) {
+  if (typeof html !== 'string' || !html) return null;
+
+  const match = html.match(/<iframe[^>]+src="([^"]+)"/i);
+  return decodeRedditUrl(match?.[1] || null);
+}
+
+function extractRedgifsId(url) {
+  if (!url) return null;
+
+  try {
+    const parsed = new URL(url);
+    if (!/(^|\.)redgifs\.com$/i.test(parsed.hostname)) return null;
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    const markerIndex = segments.findIndex((segment) => segment === 'watch' || segment === 'ifr');
+    if (markerIndex === -1 || !segments[markerIndex + 1]) return null;
+    return segments[markerIndex + 1].toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function normalizeExternalVideo(post) {
+  for (const candidate of getPostVariants(post)) {
+    const media = candidate?.secure_media || candidate?.media;
+    const oembed = media?.oembed;
+    const embedUrl = extractEmbedSrc(oembed?.html);
+    const providerName = String(oembed?.provider_name || media?.type || '').trim();
+    const providerUrl = decodeRedditUrl(oembed?.provider_url || null);
+
+    if (!embedUrl || !providerName) continue;
+
+    return {
+      externalVideoId: extractRedgifsId(embedUrl) || extractRedgifsId(decodeRedditUrl(candidate?.url_overridden_by_dest || candidate?.url) || providerUrl),
+      externalVideoProvider: providerName,
+      externalVideoEmbedUrl: embedUrl,
+      externalVideoPageUrl: decodeRedditUrl(candidate?.url_overridden_by_dest || candidate?.url) || providerUrl,
+      externalVideoPosterUrl: decodeRedditUrl(oembed?.thumbnail_url || null),
+      externalVideoWidth: Number.isFinite(oembed?.width) ? Number(oembed.width) : null,
+      externalVideoHeight: Number.isFinite(oembed?.height) ? Number(oembed.height) : null
+    };
+  }
+
+  return null;
+}
+
+function getPlayableRedditVideo(post) {
+  const crossposts = Array.isArray(post?.crosspost_parent_list) ? post.crosspost_parent_list : [];
+
+  if (post?.secure_media?.reddit_video) {
+    return {
+      sourceKind: 'reddit',
+      usedSecureMedia: true,
+      usedMedia: false,
+      usedCrosspostMedia: false,
+      skippedBecausePreviewOnly: false,
+      video: post.secure_media.reddit_video
+    };
+  }
+
+  if (post?.media?.reddit_video) {
+    return {
+      sourceKind: 'reddit',
+      usedSecureMedia: false,
+      usedMedia: true,
+      usedCrosspostMedia: false,
+      skippedBecausePreviewOnly: false,
+      video: post.media.reddit_video
+    };
+  }
+
+  for (const crosspost of crossposts) {
+    if (crosspost?.secure_media?.reddit_video) {
+      return {
+        sourceKind: 'reddit',
+        usedSecureMedia: false,
+        usedMedia: false,
+        usedCrosspostMedia: true,
+        skippedBecausePreviewOnly: false,
+        video: crosspost.secure_media.reddit_video
+      };
+    }
+
+    if (crosspost?.media?.reddit_video) {
+      return {
+        sourceKind: 'reddit',
+        usedSecureMedia: false,
+        usedMedia: false,
+        usedCrosspostMedia: true,
+        skippedBecausePreviewOnly: false,
+        video: crosspost.media.reddit_video
+      };
     }
   }
 
-  return results;
+  if (post?.preview?.reddit_video_preview) {
+    return {
+      sourceKind: 'preview',
+      usedSecureMedia: false,
+      usedMedia: false,
+      usedCrosspostMedia: false,
+      skippedBecausePreviewOnly: false,
+      video: post.preview.reddit_video_preview
+    };
+  }
+
+  return {
+    sourceKind: null,
+    usedSecureMedia: false,
+    usedMedia: false,
+    usedCrosspostMedia: false,
+    skippedBecausePreviewOnly: false,
+    video: null
+  };
+}
+
+function logNormalizedVideoSource(post, sourceInfo) {
+  if (process.env.NODE_ENV === 'production') return;
+  console.log('[normalized-video-source]', {
+    id: post?.id,
+    title: post?.title,
+    usedSecureMedia: sourceInfo.usedSecureMedia,
+    usedMedia: sourceInfo.usedMedia,
+    usedCrosspostMedia: sourceInfo.usedCrosspostMedia,
+    skippedBecausePreviewOnly: sourceInfo.skippedBecausePreviewOnly
+  });
 }
 
 function normalizeVideo(post) {
-  const candidates = collectRedditVideoCandidates(post)
-    .map((video) => {
-      const fallbackUrl = decodeRedditUrl(video?.fallback_url);
-      const hlsUrl = decodeRedditUrl(video?.hls_url);
-      const dashUrl = decodeRedditUrl(video?.dash_url);
-      return {
-        fallbackUrl,
-        hlsUrl,
-        dashUrl,
-        hasAudio: parseHasAudio(video?.has_audio),
-        durationSec: Number.isFinite(video?.duration) ? Number(video.duration) : null,
-        audioUrls: buildRedditAudioCandidates({ fallbackUrl, dashUrl })
-      };
-    })
-    .filter((video) => video.fallbackUrl || video.hlsUrl);
+  const sourceInfo = getPlayableRedditVideo(post);
+  logNormalizedVideoSource(post, sourceInfo);
+  if (!sourceInfo.video) return null;
 
-  if (!candidates.length) return null;
+  const reportedHasAudio = parseHasAudio(sourceInfo.video?.has_audio);
+  const audioCandidates = reportedHasAudio === true ? [] : buildRedditAudioCandidates(sourceInfo.video);
 
-  const best = candidates
-    .map((video) => ({
-      ...video,
-      score:
-        (video.hasAudio === true ? 100 : video.hasAudio === null ? 40 : 0) +
-        (video.hlsUrl ? 20 : 0) +
-        (video.fallbackUrl ? 10 : 0) +
-        (video.audioUrls.length ? 5 : 0)
-    }))
-    .sort((a, b) => b.score - a.score)[0];
-
-  return {
-    videoUrl: best.fallbackUrl || best.hlsUrl,
-    videoHlsUrl: best.hlsUrl || null,
-    videoDashUrl: best.dashUrl || null,
-    videoAudioUrls: best.audioUrls || [],
-    videoHasAudio: best.hasAudio,
-    videoDurationSec: best.durationSec
+  const normalizedVideo = {
+    videoUrl: decodeRedditUrl(sourceInfo.video?.fallback_url) || null,
+    videoHlsUrl: decodeRedditUrl(sourceInfo.video?.hls_url) || null,
+    videoDashUrl: decodeRedditUrl(sourceInfo.video?.dash_url) || null,
+    videoHasAudio: reportedHasAudio,
+    videoAudioUrls: audioCandidates,
+    videoDurationSec: Number.isFinite(sourceInfo.video?.duration) ? Number(sourceInfo.video.duration) : null,
+    videoSourceKind: sourceInfo.sourceKind === 'preview' ? 'preview' : 'reddit',
+    videoIsPreviewSource: sourceInfo.sourceKind === 'preview',
+    canPlayFullAudioInApp: reportedHasAudio === true || audioCandidates.length > 0
   };
+
+  if (!normalizedVideo.videoUrl && !normalizedVideo.videoHlsUrl && !normalizedVideo.videoDashUrl) {
+    return null;
+  }
+
+  return normalizedVideo;
 }
 
 function normalizeImage(post) {
@@ -170,8 +293,10 @@ export function normalizePost(post) {
 
   const destinationUrl = decodeRedditUrl(post?.url_overridden_by_dest || post?.url);
   const sourceHost = getSourceHost(destinationUrl);
+  const externalVideo = normalizeExternalVideo(post);
 
   const base = {
+    source: 'reddit',
     id: post.id,
     title: post.title || '',
     permalink: `https://www.reddit.com${post.permalink || ''}`,
@@ -188,9 +313,19 @@ export function normalizePost(post) {
     videoUrl: null,
     videoHlsUrl: null,
     videoDashUrl: null,
-    videoAudioUrls: [],
     videoHasAudio: null,
+    videoAudioUrls: [],
     videoDurationSec: null,
+    videoSourceKind: null,
+    videoIsPreviewSource: false,
+    canPlayFullAudioInApp: false,
+    externalVideoProvider: externalVideo?.externalVideoProvider || null,
+    externalVideoId: externalVideo?.externalVideoId || null,
+    externalVideoEmbedUrl: externalVideo?.externalVideoEmbedUrl || null,
+    externalVideoPageUrl: externalVideo?.externalVideoPageUrl || null,
+    externalVideoPosterUrl: externalVideo?.externalVideoPosterUrl || null,
+    externalVideoWidth: externalVideo?.externalVideoWidth || null,
+    externalVideoHeight: externalVideo?.externalVideoHeight || null,
     sourceHost,
     isRedditHosted: isRedditHostedHost(sourceHost),
     type: null
@@ -209,17 +344,20 @@ export function normalizePost(post) {
   }
 
   const video = normalizeVideo(post);
-  if (video?.videoUrl) {
+  if (video?.videoUrl || video?.videoHlsUrl || video?.videoDashUrl) {
     return {
       ...base,
       type: 'video',
-      mediaUrl: video.videoUrl,
+      mediaUrl: video.videoHlsUrl || video.videoDashUrl || video.videoUrl,
       videoUrl: video.videoUrl,
       videoHlsUrl: video.videoHlsUrl,
       videoDashUrl: video.videoDashUrl,
-      videoAudioUrls: video.videoAudioUrls,
       videoHasAudio: video.videoHasAudio,
-      videoDurationSec: video.videoDurationSec
+      videoAudioUrls: video.videoAudioUrls,
+      videoDurationSec: video.videoDurationSec,
+      videoSourceKind: video.videoSourceKind,
+      videoIsPreviewSource: video.videoIsPreviewSource,
+      canPlayFullAudioInApp: video.canPlayFullAudioInApp || Boolean(externalVideo?.externalVideoEmbedUrl)
     };
   }
 
@@ -235,8 +373,10 @@ export function normalizePost(post) {
       type: 'video',
       mediaUrl: fallbackUrl,
       videoUrl: fallbackUrl,
-      videoAudioUrls: buildRedditAudioCandidates({ fallbackUrl, dashUrl: null }),
-      videoHasAudio: null
+      videoSourceKind: 'url',
+      videoIsPreviewSource: false,
+      videoAudioUrls: [],
+      canPlayFullAudioInApp: false
     };
   }
 
@@ -252,4 +392,3 @@ export function sanitizeLimit(limit) {
   if (Number.isNaN(parsed)) return 25;
   return Math.min(100, Math.max(1, parsed));
 }
-

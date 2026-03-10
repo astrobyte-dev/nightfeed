@@ -72,7 +72,11 @@ export const NSFW_DIRECTORY = [
   },
   {
     category: 'Outfits / Public / Misc',
-    items: ['OnOff','nsfwoutfits','girlswithglasses','collared','seethru','sweatermeat','cfnm','nsfwfashion','leotards','whyevenwearanything','shinyporn','gothsluts','bikinis','bikinibridge','nsfwcosplay','nsfwcostumes','girlsinschooluniforms','WtSSTaDaMiT','tightdresses','upskirt','SchoolgirlSkirts','leggingsgonewild','Bottomless_Vixens','tight_shorts','lingerie','porn','suicidegirls','GirlsDoPorn','pornstarhq','porninaminute','ChangingRooms','workgonewild','FlashingGirls','publicflashing','sexinfrontofothers','NotSafeForNature','realpublicnudity','flashingandflaunting','publicsexporn','nakedadventures','trashyboners','flubtrash','realsexyselfies','nude_selfie','Tgirls','traps','tgifs','shemales','femboys','transporn','dirtysnapchat','randomactsofblowjob','NSFWFunny','pornhubcomments','confusedboners','dirtykikpals','nsfw_wtf','randomactsofmuffdive','stupidslutsclub','sluttyconfessions','jobuds','drunkdrunkenporn']
+    items: ['OnOff','nsfwoutfits','girlswithglasses','collared','seethru','sweatermeat','cfnm','nsfwfashion','leotards','whyevenwearanything','shinyporn','gothsluts','bikinis','bikinibridge','nsfwcosplay','nsfwcostumes','girlsinschooluniforms','WtSSTaDaMiT','tightdresses','upskirt','SchoolgirlSkirts','leggingsgonewild','Bottomless_Vixens','tight_shorts','lingerie','porn','suicidegirls','GirlsDoPorn','pornstarhq','porninaminute','ChangingRooms','workgonewild','FlashingGirls','publicflashing','sexinfrontofothers','NotSafeForNature','realpublicnudity','flashingandflaunting','publicsexporn','nakedadventures','trashyboners','flubtrash','realsexyselfies','nude_selfie','Tgirls','traps','tgifs','shemales','femboys','transporn','dirtysnapchat','randomactsofblowjob','NSFWFunny','pornhubcomments','confusedboners','dirtykikpals','nsfw_wtf','randomactsofmuffdive','stupidslutsclub','sluttyconfessions','jobuds','drunkdrunkenporn','spitfetish']
+  },
+  {
+    category: 'Feet',
+    items: ['feetonglass','feetpicsfits','FeetPoseBlowjobs','FeetR4R','FeetTouching','FeetToesandSoles','FeetToesAndSocks','Feetupassdown','Feetup','FeetUnleashed','FeetUpLookDown','FeetUpCowgirl','feetvids','Feetview','FeetWish','FeetWYR','feetwithtoes','FeetWashSixHands','Feet_NSFW','curledfeetsies']
   }
 ].map((section) => ({
   category: section.category,

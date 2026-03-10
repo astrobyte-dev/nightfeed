@@ -1,6 +1,6 @@
-﻿import { sanitizeLimit, sanitizeSort } from '../utils/normalizePost.js';
+import { sanitizeLimit, sanitizeSort } from '../utils/normalizePost.js';
 
-const DEFAULT_BASE_URL = 'https://www.reddit.com';
+const DEFAULT_REDDIT_BASE_URL = 'https://www.reddit.com';
 const DEFAULT_GRAPH_BASE_URL = 'https://graph.facebook.com/v23.0';
 const ALLOWED_TIME_RANGES = new Set(['hour', 'day', 'week', 'month', 'year', 'all']);
 
@@ -9,7 +9,7 @@ function sanitizeTimeRange(value) {
 }
 
 function buildListingUrl({ subreddit, sort, after, limit, timeRange, query }) {
-  const baseUrl = process.env.REDDIT_BASE_URL || DEFAULT_BASE_URL;
+  const baseUrl = process.env.REDDIT_BASE_URL || DEFAULT_REDDIT_BASE_URL;
   const safeSubreddit = (subreddit || '').trim();
   const hasQuery = Boolean((query || '').trim());
   const pathname = hasQuery ? `/r/${safeSubreddit}/search.json` : `/r/${safeSubreddit}/${sort}.json`;
@@ -29,13 +29,11 @@ function buildListingUrl({ subreddit, sort, after, limit, timeRange, query }) {
 }
 
 function buildUserListingUrl({ username, sort, after, limit, timeRange }) {
-  const baseUrl = process.env.REDDIT_BASE_URL || DEFAULT_BASE_URL;
+  const baseUrl = process.env.REDDIT_BASE_URL || DEFAULT_REDDIT_BASE_URL;
   const url = new URL(`/user/${username}/submitted/${sort}.json`, baseUrl);
   url.searchParams.set('raw_json', '1');
   url.searchParams.set('limit', String(limit));
-  if (after) {
-    url.searchParams.set('after', after);
-  }
+  if (after) url.searchParams.set('after', after);
   if (sort === 'top') {
     url.searchParams.set('t', sanitizeTimeRange(timeRange));
   }
@@ -43,7 +41,7 @@ function buildUserListingUrl({ username, sort, after, limit, timeRange }) {
 }
 
 function buildNewSubredditsUrl(limit) {
-  const baseUrl = process.env.REDDIT_BASE_URL || DEFAULT_BASE_URL;
+  const baseUrl = process.env.REDDIT_BASE_URL || DEFAULT_REDDIT_BASE_URL;
   const url = new URL('/subreddits/new.json', baseUrl);
   url.searchParams.set('raw_json', '1');
   url.searchParams.set('limit', String(limit));
@@ -64,14 +62,14 @@ function buildInstagramDiscoveryUrl({ appUserId, username, accessToken, after, l
 }
 
 async function fetchJson(url, options = {}) {
-  const userAgent = process.env.REDDIT_USER_AGENT || 'SubredditMediaViewer/1.0';
   const response = await fetch(url, {
     headers: {
-      'User-Agent': userAgent,
       Accept: 'application/json',
+      'User-Agent': process.env.REDDIT_USER_AGENT || 'SubredditMediaViewer/1.0',
       ...(options.headers || {})
     },
-    method: options.method || 'GET'
+    method: options.method || 'GET',
+    body: options.body
   });
 
   if (!response.ok) {
