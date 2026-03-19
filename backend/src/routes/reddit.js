@@ -94,4 +94,24 @@ router.get('/comments', async (req, res, next) => {
   }
 });
 
+router.get('/audio-proxy', async (req, res, next) => {
+  const url = String(req.query.url || '').trim();
+  if (!url.startsWith('https://v.redd.it/')) return res.status(400).end();
+  try {
+    const upstream = await fetch(url, {
+      headers: { 'User-Agent': process.env.REDDIT_USER_AGENT || 'SubredditMediaViewer/1.0' }
+    });
+    if (!upstream.ok) return res.status(upstream.status).end();
+    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'audio/mp4');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    const reader = upstream.body.getReader();
+    const pump = () => reader.read().then(({ done, value }) => {
+      if (done) { res.end(); return; }
+      res.write(Buffer.from(value));
+      pump();
+    });
+    pump();
+  } catch (e) { next(e); }
+});
+
 export default router;

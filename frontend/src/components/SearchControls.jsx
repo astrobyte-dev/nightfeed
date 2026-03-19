@@ -44,6 +44,25 @@ function SearchControls({
   const isSimpcity = source === 'simpcity';
   const isLibrary = source === 'library';
   const showGalleryTypeFilters = !isSimpcity || simpcityView === 'media';
+  const sourceGuide = isReddit
+    ? {
+        title: 'Subreddit-first discovery',
+        copy: 'Type one subreddit or combine several with +, then use the explorer rails to narrow the feed.'
+      }
+    : isInstagram
+      ? {
+          title: 'Profile-first browsing',
+          copy: 'Enter a username and scan the profile feed directly.'
+        }
+      : isSimpcity
+        ? {
+            title: 'Indexed thread explorer',
+            copy: 'Search the index globally, then refine by section, creator, host, or tag in the side rails.'
+          }
+        : {
+            title: 'Keyword-first creator search',
+            copy: 'Start with a keyword, then collapse the result set by creator, service, and media type.'
+          };
 
   return (
     <section className={`controls-card ${collapsed ? 'controls-card-collapsed' : ''}`}>
@@ -86,7 +105,7 @@ function SearchControls({
               : isInstagram
                 ? 'Enter Instagram username'
                 : isSimpcity
-                  ? 'Search indexed SimpCity threads or sections'
+                  ? 'Search SimpCity creators, aliases, or thread titles'
                   : 'Search Coomer creators or keywords'
           }
           onChange={(event) => onInputChange(event.target.value)}
@@ -104,6 +123,13 @@ function SearchControls({
 
         <button type="submit" className="primary-button">Search</button>
       </form>
+
+      {!collapsed && (
+        <div className="command-context-row">
+          <span className="eyebrow eyebrow-muted">{sourceGuide.title}</span>
+          <span className="command-context-copy">{sourceGuide.copy}</span>
+        </div>
+      )}
 
       {!collapsed && (
         <div className="controls-subrow">

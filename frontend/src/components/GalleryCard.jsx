@@ -19,7 +19,7 @@ function GalleryCard({ post, onOpen }) {
 
   return (
     <article
-      className={`media-card media-card-${post.type}`}
+      className={`media-card media-card-${post.type} ${post.isActive ? 'media-card-active' : ''}`}
       onClick={() => onOpen(post)}
       onMouseEnter={() => setIsHovering(true)}
       onMouseLeave={() => setIsHovering(false)}

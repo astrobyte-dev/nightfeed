@@ -81,7 +81,8 @@ async function fetchHtmlViaCurl(url) {
 
 export async function fetchHtml(url) {
   const body = await fetchHtmlViaCurl(url);
-  const blocked = /cloudflare|attention required|captcha|just a moment|ddos-guard|403 forbidden/i.test(body);
+  const hasExpectedPageMarkup = /message-userContent|message-body|bbWrapper|structItem--thread|p-body-pageContent/i.test(body);
+  const blocked = !hasExpectedPageMarkup && /cloudflare|attention required|captcha|just a moment|ddos-guard|403 forbidden/i.test(body);
   if (!body || blocked) {
     const error = new Error('SimpCity blocked public crawl request.');
     error.status = 502;
@@ -276,7 +277,24 @@ function isUsefulCandidate(url) {
 }
 
 function shouldSkipThreadRow(title) {
-  return /category specific rules and guidelines|mirroring policy|ranking up guide|underage content allegations/i.test(title);
+  return /category specific rules and guidelines|mirroring policy|ranking up guide|underage content allegations|approved\s*&\s*recommended file hosts|rules and faq/i.test(title);
+}
+
+function deriveCreatorIdentity(thread) {
+  const creatorName = cleanText(thread?.title || '');
+  if (!creatorName || shouldSkipThreadRow(creatorName)) {
+    return { creatorName: null, creatorSlug: null };
+  }
+
+  return {
+    creatorName,
+    creatorSlug: slugify(creatorName)
+  };
+}
+
+function isGuestRestrictedThreadPage(html) {
+  return /blockMessage--error[\s\S]*You must be logged-in to do that\./i.test(html)
+    && !/message-userContent|message-body|bbWrapper/i.test(html);
 }
 
 function extractCandidateUrlsFromThread(html, threadUrl) {
@@ -291,7 +309,7 @@ function extractCandidateUrlsFromThread(html, threadUrl) {
     out.push(decoded);
   };
 
-  const attrRe = /(href|src|data-src|data-url|poster)=['"]([^'"]+)['"]/gi;
+  const attrRe = /(href|src|data-src|data-url|data-lb-src|data-lb-universal-src|poster|srcset)=['"]([^'"]+)['"]/gi;
   const inlineUrlRe = /https?:\/\/[^\s<>'"]+/gi;
   const redgifsRe = /loadMedia\(this,\s*['"]([^'"]+)['"]\)/gi;
 
@@ -300,7 +318,17 @@ function extractCandidateUrlsFromThread(html, threadUrl) {
     attrRe.lastIndex = 0;
     inlineUrlRe.lastIndex = 0;
     redgifsRe.lastIndex = 0;
-    while ((match = attrRe.exec(block)) !== null) pushUrl(match[2]);
+    while ((match = attrRe.exec(block)) !== null) {
+      if (match[1] === 'srcset') {
+        match[2]
+          .split(',')
+          .map((entry) => entry.trim().split(/\s+/)[0])
+          .filter(Boolean)
+          .forEach((url) => pushUrl(url));
+        continue;
+      }
+      pushUrl(match[2]);
+    }
     while ((match = inlineUrlRe.exec(block)) !== null) pushUrl(match[0]);
     while ((match = redgifsRe.exec(block)) !== null) pushUrl(match[1]);
   }
@@ -365,6 +393,8 @@ async function crawlThreadDetail(thread, sectionContext) {
   const html = await fetchHtml(thread.threadUrl);
   const tags = extractTagNames(html);
   const author = thread.author || extractAuthor(html) || null;
+  const creatorIdentity = deriveCreatorIdentity(thread);
+  const guestRestricted = isGuestRestrictedThreadPage(html);
   const candidateUrls = extractCandidateUrlsFromThread(html, thread.threadUrl);
   const mediaItems = await resolveMediaCandidates(candidateUrls, thread.threadUrl);
   const coverImageUrl = mediaItems.find((item) => item.mediaType === 'image')?.thumbnailUrl || mediaItems[0]?.thumbnailUrl || mediaItems[0]?.posterUrl || mediaItems[0]?.directUrl || null;
@@ -372,10 +402,13 @@ async function crawlThreadDetail(thread, sectionContext) {
   return {
     ...thread,
     author,
+    creatorName: creatorIdentity.creatorName,
+    creatorSlug: creatorIdentity.creatorSlug,
     tags,
     mediaItems,
     mediaCount: mediaItems.length,
     coverImageUrl,
+    guestRestricted,
     categoryName: sectionContext.categoryName,
     sectionName: sectionContext.sectionName
   };
@@ -395,6 +428,8 @@ async function crawlSection(section, sectionId, categoryName, options) {
       threadUrl: detail.threadUrl,
       title: detail.title,
       author: detail.author,
+      creatorName: detail.creatorName,
+      creatorSlug: detail.creatorSlug,
       createdAt: detail.createdAt || null,
       updatedAt: detail.updatedAt || null,
       replyCount: detail.replyCount,
@@ -430,11 +465,18 @@ export async function crawlSimpcityIndex(options = {}) {
       clearSimpcityIndex();
 
       const stats = { categories: 0, sections: 0, threads: 0, media: 0 };
+      const categoryLimit = Number.isFinite(options.categoryLimit) ? Number(options.categoryLimit) : null;
+      const sectionLimit = Number.isFinite(options.sectionLimit) ? Number(options.sectionLimit) : null;
+      let processedCategories = 0;
+      let processedSections = 0;
       for (const category of categories) {
+        if (categoryLimit && processedCategories >= categoryLimit) break;
         const categoryId = upsertCategory(category);
         stats.categories += 1;
+        processedCategories += 1;
 
         for (const section of category.sections) {
+          if (sectionLimit && processedSections >= sectionLimit) break;
           const sectionId = upsertSection({
             categoryId,
             categoryName: category.name,
@@ -446,14 +488,22 @@ export async function crawlSimpcityIndex(options = {}) {
             postCount: section.postCount || 0
           });
           stats.sections += 1;
+          processedSections += 1;
           const sectionStats = await crawlSection(section, sectionId, category.name, options);
           stats.threads += sectionStats.crawledThreads;
           stats.media += sectionStats.crawledMedia;
         }
+
+        if (sectionLimit && processedSections >= sectionLimit) {
+          break;
+        }
       }
 
-      finishCrawlJob(jobId, { status: 'success', stats: { ...stats, db: getSimpcityStats() } });
-      return { ok: true, stats: { ...stats, db: getSimpcityStats() } };
+      const warning = stats.media === 0 && !process.env.SIMPCITY_COOKIE
+        ? 'SimpCity thread pages are returning a login wall for guest requests. Add SIMPCITY_COOKIE from a normal logged-in browser session, then recrawl to index thread media and Bunkr mirrors.'
+        : null;
+      finishCrawlJob(jobId, { status: 'success', stats: { ...stats, db: getSimpcityStats(), warning } });
+      return { ok: true, stats: { ...stats, db: getSimpcityStats(), warning } };
     } catch (error) {
       finishCrawlJob(jobId, { status: 'error', error: error.message });
       throw error;

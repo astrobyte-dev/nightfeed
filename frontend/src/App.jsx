@@ -2,8 +2,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import SearchControls from './components/SearchControls';
 import GalleryGrid from './components/GalleryGrid';
-import LightboxModal from './components/LightboxModal';
 import SimpcityThreadList from './components/SimpcityThreadList';
+import FeedView from './components/FeedView';
 import {
   fetchIndexedSimpcityMedia,
   fetchInstagramMedia,
@@ -12,6 +12,7 @@ import {
   fetchMediaSearch,
   fetchMediaTags,
   fetchRedditUserMedia,
+  fetchSimpcityCreators,
   fetchSimpcitySidebar,
   fetchSimpcityTags,
   fetchSimpcityThreadDetail,
@@ -37,6 +38,7 @@ const MEDIA_PAGE_SIZE_IG = 24;
 const MEDIA_PAGE_SIZE_SC = 36;
 const MEDIA_PAGE_SIZE_LIBRARY = 30;
 const THREAD_PAGE_SIZE_SC = 24;
+const LOAD_MORE_ROOT_MARGIN = '1500px 0px';
 
 const DEFAULT_REDDIT_FILTERS = {
   keyword: '',
@@ -54,6 +56,7 @@ const DEFAULT_SIMPCITY_FILTERS = {
   category: '',
   section: '',
   tag: '',
+  creator: '',
   author: '',
   sourceHost: ''
 };
@@ -103,6 +106,26 @@ function parseStoredJson(key, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function findDirectoryCategoryLabel(subredditValue) {
+  const normalized = String(subredditValue || '').trim().toLowerCase();
+  if (!normalized || !normalized.includes('+')) return '';
+  const match = NSFW_DIRECTORY.find((section) => section.items.join('+').toLowerCase() === normalized);
+  return match?.category || '';
+}
+
+function findDirectorySection(categoryLabel, subredditValue) {
+  const normalizedCategory = String(categoryLabel || '').trim().toLowerCase();
+  if (normalizedCategory) {
+    const byCategory = NSFW_DIRECTORY.find((section) => section.category.toLowerCase() === normalizedCategory);
+    if (byCategory) return byCategory;
+  }
+
+  const normalizedSubreddit = String(subredditValue || '').trim().toLowerCase();
+  if (!normalizedSubreddit || normalizedSubreddit.includes('+')) return null;
+
+  return NSFW_DIRECTORY.find((section) => section.items.some((item) => item.toLowerCase() === normalizedSubreddit)) || null;
 }
 
 function makeSearchLabel(subreddit, filters) {
@@ -168,6 +191,7 @@ function createFeedSnapshot({
   source,
   redditInput,
   subreddit,
+  redditCategoryLabel,
   instagramInput,
   instagramUsername,
   simpcityInput,
@@ -189,6 +213,7 @@ function createFeedSnapshot({
     source,
     redditInput,
     subreddit,
+    redditCategoryLabel,
     instagramInput,
     instagramUsername,
     simpcityInput,
@@ -214,10 +239,49 @@ function toSimpcityMediaType(filter) {
   return 'all';
 }
 
+function buildSummaryItem(label, value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return null;
+  return { label, value: normalized };
+}
+
+function FilterSummaryCard({ title, subtitle, items, onClearAll, emptyLabel = 'No filters active right now.' }) {
+  return (
+    <section className="sidebar-card explorer-summary-card">
+      <div className="sidebar-section-head">
+        <div>
+          <h3>{title}</h3>
+          {subtitle ? <p>{subtitle}</p> : null}
+        </div>
+        {items.length > 0 && onClearAll ? (
+          <button type="button" className="ghost-button ghost-button-small" onClick={onClearAll}>
+            Clear all
+          </button>
+        ) : null}
+      </div>
+      {items.length > 0 ? (
+        <div className="active-filter-grid">
+          {items.map((item) => (
+            <div key={`${item.label}:${item.value}`} className="active-filter-pill">
+              <span className="active-filter-label">{item.label}</span>
+              <strong>{item.value}</strong>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="sidebar-empty">{emptyLabel}</div>
+      )}
+    </section>
+  );
+}
+
 function App() {
+  const initialSubreddit = localStorage.getItem(LAST_SUBREDDIT_KEY) || 'pics';
+  const initialRedditCategoryLabel = findDirectoryCategoryLabel(initialSubreddit);
   const [source, setSource] = useState('reddit');
-  const [redditInput, setRedditInput] = useState(localStorage.getItem(LAST_SUBREDDIT_KEY) || 'pics');
-  const [subreddit, setSubreddit] = useState(localStorage.getItem(LAST_SUBREDDIT_KEY) || 'pics');
+  const [redditInput, setRedditInput] = useState(initialRedditCategoryLabel ? '' : initialSubreddit);
+  const [subreddit, setSubreddit] = useState(initialSubreddit);
+  const [redditCategoryLabel, setRedditCategoryLabel] = useState(initialRedditCategoryLabel);
   const [instagramInput, setInstagramInput] = useState(localStorage.getItem(LAST_IG_KEY) || 'instagram');
   const [instagramUsername, setInstagramUsername] = useState(localStorage.getItem(LAST_IG_KEY) || 'instagram');
   const [simpcityInput, setSimpcityInput] = useState(localStorage.getItem(LAST_SC_KEY) || 'onlyfans');
@@ -234,6 +298,11 @@ function App() {
   const [libraryTagQuery, setLibraryTagQuery] = useState('');
   const [simpcitySidebar, setSimpcitySidebar] = useState([]);
   const [simpcityTags, setSimpcityTags] = useState([]);
+  const [simpcityCreators, setSimpcityCreators] = useState([]);
+  const [simpcityCreatorQuery, setSimpcityCreatorQuery] = useState('');
+  const [simpcityTagQuery, setSimpcityTagQuery] = useState('');
+  const [simpcityHostQuery, setSimpcityHostQuery] = useState('');
+  const [simpcitySectionQuery, setSimpcitySectionQuery] = useState('');
   const [simpcityHosts, setSimpcityHosts] = useState([]);
   const [simpcityStats, setSimpcityStats] = useState(null);
   const [simpcityThreads, setSimpcityThreads] = useState([]);
@@ -259,6 +328,8 @@ function App() {
   const [activePost, setActivePost] = useState(null);
   const [nsfwQuery, setNsfwQuery] = useState('');
   const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false);
+  const [feedMode, setFeedMode] = useState(false);
+  const [downloadQueue, setDownloadQueue] = useState(() => JSON.parse(localStorage.getItem('nightfeed:download-queue') || '[]'));
   const debounceTimer = useRef(null);
   const loadMoreSentinelRef = useRef(null);
   const ignoreHistoryRef = useRef(false);
@@ -270,6 +341,7 @@ function App() {
       source,
       redditInput,
       subreddit,
+      redditCategoryLabel,
       instagramInput,
       instagramUsername,
       simpcityInput,
@@ -291,6 +363,7 @@ function App() {
       source,
       redditInput,
       subreddit,
+      redditCategoryLabel,
       instagramInput,
       instagramUsername,
       simpcityInput,
@@ -425,6 +498,38 @@ function App() {
     return libraryTags.filter((tag) => tag.name.toLowerCase().includes(query));
   }, [libraryTags, libraryTagQuery]);
 
+  const filteredSimpcityCreators = useMemo(() => {
+    const query = simpcityCreatorQuery.trim().toLowerCase();
+    if (!query) return simpcityCreators;
+    return simpcityCreators.filter((creator) => String(creator.name || '').toLowerCase().includes(query));
+  }, [simpcityCreators, simpcityCreatorQuery]);
+
+  const filteredSimpcityTags = useMemo(() => {
+    const query = simpcityTagQuery.trim().toLowerCase();
+    if (!query) return simpcityTags;
+    return simpcityTags.filter((tag) => String(tag.name || '').toLowerCase().includes(query));
+  }, [simpcityTags, simpcityTagQuery]);
+
+  const filteredSimpcityHosts = useMemo(() => {
+    const query = simpcityHostQuery.trim().toLowerCase();
+    if (!query) return simpcityHosts;
+    return simpcityHosts.filter((host) => String(host.host || '').toLowerCase().includes(query));
+  }, [simpcityHosts, simpcityHostQuery]);
+
+  const filteredSimpcitySidebar = useMemo(() => {
+    const query = simpcitySectionQuery.trim().toLowerCase();
+    if (!query) return simpcitySidebar;
+
+    return simpcitySidebar
+      .map((category) => ({
+        ...category,
+        sections: (category.sections || []).filter(
+          (section) => String(section.name || '').toLowerCase().includes(query) || String(category.name || '').toLowerCase().includes(query)
+        )
+      }))
+      .filter((category) => category.sections.length > 0);
+  }, [simpcitySidebar, simpcitySectionQuery]);
+
   const selectedLibraryCreator = useMemo(
     () => libraryCreators.find((creator) => String(creator.id) === String(libraryFilters.creator)) || null,
     [libraryCreators, libraryFilters.creator]
@@ -445,6 +550,7 @@ function App() {
     setSource(snapshot.source);
     setRedditInput(snapshot.redditInput);
     setSubreddit(snapshot.subreddit);
+    setRedditCategoryLabel(snapshot.redditCategoryLabel || '');
     setInstagramInput(snapshot.instagramInput);
     setInstagramUsername(snapshot.instagramUsername);
     setSimpcityInput(snapshot.simpcityInput);
@@ -540,7 +646,11 @@ function App() {
 
     async function loadSidebar() {
       try {
-        const [sidebarData, tagData] = await Promise.all([fetchSimpcitySidebar(), fetchSimpcityTags()]);
+        const [sidebarData, tagData, creatorData] = await Promise.all([
+          fetchSimpcitySidebar(),
+          fetchSimpcityTags(),
+          fetchSimpcityCreators({ search: simpcityCreatorQuery.trim(), limit: 80 })
+        ]);
         if (cancelled) return;
         setSimpcitySidebar(sidebarData.categories || []);
         setSimpcityStats(sidebarData.stats || null);
@@ -549,6 +659,7 @@ function App() {
         }
         setSimpcityTags(tagData.tags || []);
         setSimpcityHosts(tagData.hosts || []);
+        setSimpcityCreators(creatorData.items || []);
       } catch (sidebarError) {
         if (!cancelled) {
           console.error('[simpcity] failed to load indexed sidebar', sidebarError);
@@ -560,7 +671,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [source]);
+  }, [source, simpcityCreatorQuery]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -643,6 +754,7 @@ function App() {
             category: simpcityFilters.category,
             section: simpcityFilters.section,
             tag: simpcityFilters.tag,
+            creator: simpcityFilters.creator,
             author: simpcityFilters.author,
             search: simpcitySearch,
             after: null,
@@ -658,6 +770,7 @@ function App() {
             category: simpcityFilters.category,
             section: simpcityFilters.section,
             tag: simpcityFilters.tag,
+            creator: simpcityFilters.creator,
             author: simpcityFilters.author,
             search: simpcitySearch,
             mediaType: toSimpcityMediaType(mediaFilter),
@@ -828,6 +941,17 @@ function App() {
     setActivePost(navigationItems[navigationItems.length - 1]);
   }
 
+  function toggleActivePost(post) {
+    setActivePost((current) => (current?.id === post.id ? null : post));
+  }
+
+  useEffect(() => {
+    if (!activePost) return;
+    if (!displayItems.some((item) => item.id === activePost.id)) {
+      setActivePost(null);
+    }
+  }, [displayItems, activePost]);
+
   const handleLoadMore = useCallback(async () => {
     if (!currentAfter || loadingMore) return;
 
@@ -883,6 +1007,7 @@ function App() {
           category: simpcityFilters.category,
           section: simpcityFilters.section,
           tag: simpcityFilters.tag,
+          creator: simpcityFilters.creator,
           author: simpcityFilters.author,
           search: simpcitySearch,
           after: currentAfter,
@@ -895,6 +1020,7 @@ function App() {
           category: simpcityFilters.category,
           section: simpcityFilters.section,
           tag: simpcityFilters.tag,
+          creator: simpcityFilters.creator,
           author: simpcityFilters.author,
           search: simpcitySearch,
           mediaType: toSimpcityMediaType(mediaFilter),
@@ -940,7 +1066,7 @@ function App() {
           handleLoadMore();
         }
       },
-      { rootMargin: '900px 0px' }
+      { rootMargin: LOAD_MORE_ROOT_MARGIN, threshold: 0.01 }
     );
 
     observer.observe(node);
@@ -954,6 +1080,7 @@ function App() {
     if (source === 'reddit') {
       const next = redditInput.trim().replace(/^r\//i, '');
       if (!next) return;
+      setRedditCategoryLabel('');
       setSubreddit(next);
       return;
     }
@@ -984,6 +1111,7 @@ function App() {
         const next = value.trim().replace(/^r\//i, '');
         if (next) {
           setAuthorView(null);
+          setRedditCategoryLabel('');
           setSubreddit(next);
         }
       }, 700);
@@ -1036,6 +1164,7 @@ function App() {
   function applyRedditSearch(search) {
     setSource('reddit');
     setAuthorView(null);
+    setRedditCategoryLabel('');
     setRedditInput(search.subreddit);
     setSubreddit(search.subreddit);
     setRedditFilters(search.filters);
@@ -1050,23 +1179,152 @@ function App() {
   }
 
   const visibleTopPicks = useMemo(() => NSFW_TOP_PICKS.filter((name) => !hiddenSubredditSet.has(name.toLowerCase())), [hiddenSubredditSet]);
+  const activeRedditDirectorySection = useMemo(
+    () => findDirectorySection(redditCategoryLabel, subreddit),
+    [redditCategoryLabel, subreddit]
+  );
+  const redditSpotlightItems = useMemo(() => {
+    if (activeRedditDirectorySection?.items?.length) {
+      return activeRedditDirectorySection.items.filter((name) => !hiddenSubredditSet.has(name.toLowerCase()));
+    }
+    return visibleTopPicks.slice(0, 12);
+  }, [activeRedditDirectorySection, hiddenSubredditSet, visibleTopPicks]);
+  const redditCategoryStrip = useMemo(() => filteredDirectory.slice(0, 10), [filteredDirectory]);
+  const redditFeedLabel = authorView?.source === 'reddit'
+    ? `u/${authorView.username}`
+    : redditCategoryLabel
+      ? `${redditCategoryLabel} category`
+      : `r/${subreddit}`;
+  const redditSpotlightLabel = authorView?.source === 'reddit'
+    ? `More from u/${authorView.username}`
+    : activeRedditDirectorySection?.category
+      ? `${activeRedditDirectorySection.category} lane`
+      : 'Quick subreddit strip';
+
+  const redditSummaryItems = useMemo(() => ([
+    buildSummaryItem('Feed', redditFeedLabel),
+    buildSummaryItem('Sort', sort),
+    buildSummaryItem('Order', order),
+    buildSummaryItem('Keyword', redditFilters.keyword),
+    buildSummaryItem('Flair', redditFilters.flair),
+    redditFilters.onlyRedditHosted ? { label: 'Host', value: 'Reddit only' } : null,
+    redditFilters.minScore ? { label: 'Min score', value: String(redditFilters.minScore) } : null
+  ].filter(Boolean)), [redditFeedLabel, sort, order, redditFilters]);
+
+  const simpcitySummaryItems = useMemo(() => ([
+    buildSummaryItem('Mode', simpcityView),
+    buildSummaryItem('Search', simpcitySearch),
+    buildSummaryItem('Section', simpcityFilters.section),
+    buildSummaryItem('Creator', simpcityFilters.creator),
+    buildSummaryItem('Tag', simpcityFilters.tag),
+    buildSummaryItem('Host', simpcityFilters.sourceHost),
+    mediaFilter !== 'all' ? { label: 'Media', value: mediaFilter } : null
+  ].filter(Boolean)), [simpcityView, simpcitySearch, simpcityFilters, mediaFilter]);
+
+  const librarySummaryItems = useMemo(() => ([
+    buildSummaryItem('Keyword', librarySearch),
+    buildSummaryItem('Creator', getLibraryCreatorLabel(selectedLibraryCreator)),
+    buildSummaryItem('Service', libraryFilters.tag),
+    buildSummaryItem('Media', mediaFilter !== 'all' ? mediaFilter : ''),
+    buildSummaryItem('Sort', librarySort)
+  ].filter(Boolean)), [librarySearch, selectedLibraryCreator, libraryFilters.tag, mediaFilter, librarySort]);
+
+  const overviewTitle = source === 'reddit'
+    ? redditFeedLabel
+    : source === 'simpcity'
+      ? (simpcityView === 'threads' ? 'SimpCity thread explorer' : 'SimpCity media explorer')
+      : source === 'library'
+        ? 'Coomer discovery'
+        : `@${instagramUsername}`;
+
+  const overviewSubtitle = source === 'reddit'
+    ? 'Fast feed pivots, saved presets, and directory-first subreddit navigation.'
+    : source === 'simpcity'
+      ? 'Search creators, sections, tags, and hosts from the indexed forum crawl without losing context.'
+      : source === 'library'
+        ? 'Keyword-first creator discovery with service and media-type narrowing.'
+        : 'Profile-first browsing for Instagram media.';
+
+  const overviewMetrics = source === 'simpcity'
+    ? [
+        { label: 'Indexed threads', value: String(simpcityStats?.thread_count || 0) },
+        { label: 'Indexed media', value: String(simpcityStats?.media_count || 0) },
+        { label: simpcityView === 'threads' ? 'Visible threads' : 'Visible media', value: String(simpcityView === 'threads' ? simpcityThreads.length : displayItems.length) }
+      ]
+    : source === 'library'
+      ? [
+          { label: 'Visible media', value: String(displayItems.length) },
+          { label: 'Creators', value: String(filteredLibraryCreators.length) },
+          { label: 'Services', value: String(filteredLibraryTags.length) }
+        ]
+      : source === 'reddit'
+        ? [
+            { label: 'Visible media', value: String(displayItems.length) },
+            { label: 'Directory sections', value: String(filteredDirectory.length) },
+            { label: 'Top picks', value: String(visibleTopPicks.length) }
+          ]
+        : [{ label: 'Visible media', value: String(displayItems.length) }];
+
+  function resetRedditDiscovery() {
+    setAuthorView(null);
+    setRedditCategoryLabel('');
+    if (subreddit.includes('+')) {
+      setRedditInput('nsfw');
+      setSubreddit('nsfw');
+    }
+    setRedditFilters(DEFAULT_REDDIT_FILTERS);
+    setNsfwQuery('');
+  }
+
+  function resetSimpcityDiscovery() {
+    setAuthorView(null);
+    setSimpcityInput('');
+    setSimpcitySearch('');
+    setSimpcityView('media');
+    setSimpcityCreatorQuery('');
+    setSimpcityTagQuery('');
+    setSimpcityHostQuery('');
+    setSimpcitySectionQuery('');
+    updateSimpcityFilters({ ...DEFAULT_SIMPCITY_FILTERS }, { switchToMedia: true });
+  }
 
   function handlePickNsfwSubreddit(name) {
     setSource('reddit');
     setAuthorView(null);
     setIncludeNsfw(true);
+    setRedditCategoryLabel('');
     setRedditInput(name);
     setSubreddit(name);
   }
 
-  function handlePickNsfwCategory(itemsInCategory) {
+  function handlePickNsfwCategory(categoryName, itemsInCategory) {
     if (!Array.isArray(itemsInCategory) || itemsInCategory.length === 0) return;
     const multireddit = itemsInCategory.join('+');
     setSource('reddit');
     setAuthorView(null);
     setIncludeNsfw(true);
-    setRedditInput(multireddit);
+    setRedditCategoryLabel(categoryName || 'Category');
+    setRedditInput('');
     setSubreddit(multireddit);
+  }
+
+  function addToQueue(post) {
+    const url = post.videoUrl || post.mediaUrl;
+    if (!url) return;
+    setDownloadQueue((prev) => {
+      if (prev.find((item) => item.url === url)) return prev;
+      const next = [...prev, { id: post.id, title: post.title, url, type: post.type, addedAt: Date.now() }];
+      localStorage.setItem('nightfeed:download-queue', JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function removeFromQueue(url) {
+    setDownloadQueue((prev) => {
+      const next = prev.filter((item) => item.url !== url);
+      localStorage.setItem('nightfeed:download-queue', JSON.stringify(next));
+      return next;
+    });
   }
 
   function handleOpenAuthorGallery(postItem) {
@@ -1083,9 +1341,9 @@ function App() {
 
     if (postItem.source === 'simpcity') {
       setSource('simpcity');
-      setSimpcityInput(postItem.author);
-      setSimpcitySearch(postItem.author);
-      updateSimpcityFilters({ author: postItem.author }, { switchToMedia: true });
+      setSimpcityInput(postItem.creator || postItem.author);
+      setSimpcitySearch(postItem.creator || postItem.author);
+      updateSimpcityFilters({ creator: postItem.creatorSlug || '', author: '', tag: '', sourceHost: '' }, { switchToMedia: true });
       setActivePost(null);
       return;
     }
@@ -1111,7 +1369,7 @@ function App() {
 
   const activeSimpcityThread = simpcityThreadDetail?.thread || simpcitySelectedThread;
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${feedMode ? 'feed-mode' : ''}`}>
       <div className={`header-shell ${isHeaderCollapsed ? 'collapsed-header' : ''}`}>
         <div className="header-layer header-layer-expanded">
           <header className="hero">
@@ -1125,7 +1383,7 @@ function App() {
           <SearchControls
             collapsed={false}
             source={source}
-            inputValue={source === 'reddit' ? redditInput : source === 'instagram' ? instagramInput : source === 'simpcity' ? simpcityInput : libraryInput}
+            inputValue={source === 'reddit' ? (redditCategoryLabel ? '' : redditInput) : source === 'instagram' ? instagramInput : source === 'simpcity' ? simpcityInput : libraryInput}
             sort={activeSort}
             mediaFilter={mediaFilter}
             simpcityView={simpcityView}
@@ -1162,7 +1420,7 @@ function App() {
           <SearchControls
             collapsed
             source={source}
-            inputValue={source === 'reddit' ? redditInput : source === 'instagram' ? instagramInput : source === 'simpcity' ? simpcityInput : libraryInput}
+            inputValue={source === 'reddit' ? (redditCategoryLabel ? '' : redditInput) : source === 'instagram' ? instagramInput : source === 'simpcity' ? simpcityInput : libraryInput}
             sort={activeSort}
             mediaFilter={mediaFilter}
             simpcityView={simpcityView}
@@ -1206,19 +1464,124 @@ function App() {
         </div>
       )}
 
-      <div className={`content-layout ${source === 'instagram' ? 'instagram-layout' : ''}`}>
+      {source === 'reddit' && (
+        <section className="top-discovery-shell" aria-label="Reddit discovery strip">
+          <div className="top-discovery-card top-discovery-card-spotlight">
+            <div className="top-discovery-head">
+              <div>
+                <p className="modal-kicker">Subreddit strip</p>
+                <h3>{redditSpotlightLabel}</h3>
+                <p>
+                  {activeRedditDirectorySection?.category
+                    ? 'Stay in the same pocket while moving between related subreddits.'
+                    : 'Jump into frequent high-volume feeds without pushing long strings into the search bar.'}
+                </p>
+              </div>
+              {redditCategoryLabel ? (
+                <button type="button" className="ghost-button ghost-button-small" onClick={resetRedditDiscovery}>
+                  Clear lane
+                </button>
+              ) : null}
+            </div>
+            <div className="top-discovery-chip-row">
+              {redditSpotlightItems.map((name) => (
+                <button
+                  key={`spotlight-${name}`}
+                  type="button"
+                  className={`top-strip-chip ${subreddit.toLowerCase() === name.toLowerCase() ? 'active' : ''}`}
+                  onClick={() => handlePickNsfwSubreddit(name)}
+                >
+                  <span className="top-strip-chip-label">r/{name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="top-discovery-card top-discovery-card-categories">
+            <div className="top-discovery-head">
+              <div>
+                <p className="modal-kicker">Category lanes</p>
+                <h3>Browse by cluster</h3>
+                <p>Open a full category feed from the top bar, then use the left rail for deeper cuts.</p>
+              </div>
+            </div>
+            <div className="top-discovery-chip-row top-discovery-chip-row-categories">
+              {redditCategoryStrip.map((section) => {
+                const isActive = redditCategoryLabel === section.category;
+                return (
+                  <button
+                    key={`category-${section.category}`}
+                    type="button"
+                    className={`top-strip-chip top-strip-chip-category ${isActive ? 'active' : ''}`}
+                    onClick={() => handlePickNsfwCategory(section.category, section.items)}
+                  >
+                    <span className="top-strip-chip-label">{section.category}</span>
+                    <span className="top-strip-chip-meta">{section.items.length} subs</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
+
+      <button
+        type="button"
+        className={`feed-toggle-btn ${feedMode ? 'active' : ''}`}
+        onClick={() => setFeedMode((v) => !v)}
+        title={feedMode ? 'Exit feed mode' : 'Enter feed mode'}
+      >
+        {feedMode ? '⊠ Exit feed' : '⊞ Feed mode'}
+      </button>
+
+      {feedMode ? (
+        <FeedView
+          items={displayItems}
+          onLoadMore={handleLoadMore}
+          hasMore={Boolean(currentAfter)}
+          loadingMore={loadingMore}
+          onOpenAuthorGallery={handleOpenAuthorGallery}
+          onOpenLightbox={setActivePost}
+          onExit={() => setFeedMode(false)}
+        />
+      ) : (
+      <div className={`content-layout ${source === 'instagram' ? 'instagram-layout' : ''} ${source === 'reddit' ? 'reddit-layout' : ''} ${source === 'simpcity' ? 'simpcity-layout' : ''} ${source === 'library' ? 'library-layout' : ''}`}>
         {source === 'reddit' && (
           <aside className="sidebar-rail sidebar-rail-left">
             <section className="sidebar-card directory-sidebar">
-              <h3>NSFW Directory</h3>
-              <p>Click a category to load the full category feed, then use the chips to narrow to a specific subreddit.</p>
+              <div className="sidebar-section-head">
+                <div>
+                  <h3>Reddit explorer</h3>
+                  <p>Start broad with categories, then snap into a specific subreddit or saved path.</p>
+                </div>
+                <button type="button" className="ghost-button ghost-button-small" onClick={resetRedditDiscovery}>
+                  Reset
+                </button>
+              </div>
+              <div className="sidebar-stat-row">
+                <div className="sidebar-stat-pill"><span>Categories</span><strong>{filteredDirectory.length}</strong></div>
+                <div className="sidebar-stat-pill"><span>Top picks</span><strong>{visibleTopPicks.length}</strong></div>
+              </div>
               <input
                 className="directory-search"
                 type="text"
-                placeholder="Filter subreddits"
+                placeholder="Filter categories or subreddits"
                 value={nsfwQuery}
                 onChange={(event) => setNsfwQuery(event.target.value)}
               />
+
+              <div className="shortcut-list compact-shortcut-list">
+                {visibleTopPicks.slice(0, 6).map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    className={`shortcut-chip ${subreddit.toLowerCase() === name.toLowerCase() ? 'active' : ''}`}
+                    onClick={() => handlePickNsfwSubreddit(name)}
+                  >
+                    <span>r/{name}</span>
+                  </button>
+                ))}
+              </div>
 
               <div className="directory-sections">
                 {filteredDirectory.map((section) => {
@@ -1234,7 +1597,7 @@ function App() {
                           onClick={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
-                            handlePickNsfwCategory(section.items);
+                            handlePickNsfwCategory(section.category, section.items);
                           }}
                         >
                           {section.category}
@@ -1265,26 +1628,52 @@ function App() {
             <section className="sidebar-card simpcity-nav-card">
               <div className="sidebar-section-head">
                 <div>
-                  <h3>SimpCity index</h3>
-                  <p>Indexed public sections mirrored from the forum structure.</p>
+                  <h3>SimpCity explorer</h3>
+                  <p>Move between sections, creators, and media without losing your place in the index.</p>
                 </div>
-                {simpcityStats && <span className="meta-chip">{simpcityStats.thread_count || 0} threads</span>}
+                <button type="button" className="ghost-button ghost-button-small" onClick={resetSimpcityDiscovery}>
+                  Reset
+                </button>
               </div>
+
+              <div className="sidebar-stat-row">
+                <div className="sidebar-stat-pill"><span>Threads</span><strong>{simpcityStats?.thread_count || 0}</strong></div>
+                <div className="sidebar-stat-pill"><span>Media</span><strong>{simpcityStats?.media_count || 0}</strong></div>
+                <div className="sidebar-stat-pill"><span>Sections</span><strong>{simpcitySidebar.reduce((total, category) => total + (category.sections?.length || 0), 0)}</strong></div>
+              </div>
+
+              <input
+                className="directory-search"
+                type="text"
+                value={simpcitySectionQuery}
+                placeholder="Filter sections or categories"
+                onChange={(event) => setSimpcitySectionQuery(event.target.value)}
+              />
 
               <div className="simpcity-nav-actions">
                 <button
                   type="button"
-                  className={`shortcut-chip shortcut-chip-wide ${!simpcityFilters.section && !simpcityFilters.tag && !simpcityFilters.author && !simpcityFilters.sourceHost ? 'active' : ''}`}
+                  className={`shortcut-chip shortcut-chip-wide ${!simpcityFilters.section && !simpcityFilters.tag && !simpcityFilters.creator && !simpcityFilters.author && !simpcityFilters.sourceHost ? 'active' : ''}`}
                   onClick={() => {
                     updateSimpcityFilters({ ...DEFAULT_SIMPCITY_FILTERS }, { switchToMedia: true });
                   }}
                 >
                   <span>All indexed media</span>
                 </button>
+                <button
+                  type="button"
+                  className={`shortcut-chip shortcut-chip-wide ${simpcityView === 'threads' ? 'active' : ''}`}
+                  onClick={() => {
+                    setSimpcityView('threads');
+                    resetSimpcityThreadSelection();
+                  }}
+                >
+                  <span>Browse threads</span>
+                </button>
               </div>
 
               <div className="directory-sections simpcity-sections">
-                {simpcitySidebar.map((category) => {
+                {filteredSimpcitySidebar.map((category) => {
                   const isCategoryOpen = category.name === simpcityFilters.category || category.sections.some((section) => section.slug === activeSectionSlug);
 
                   return (
@@ -1304,6 +1693,7 @@ function App() {
                                   category: category.name,
                                   section: section.slug,
                                   tag: '',
+                                  creator: '',
                                   author: '',
                                   sourceHost: ''
                                 },
@@ -1330,10 +1720,17 @@ function App() {
             <section className="sidebar-card library-directory-card">
               <div className="sidebar-section-head">
                 <div>
-                  <h3>Remooc Directory</h3>
                   <h3>Coomer Directory</h3>
-                  <p>Live Coomer search results with creator and service filters derived from the current query.</p>
+                  <p>Refine one live result set by media type, creator, and service instead of jumping between pages.</p>
                 </div>
+                <button type="button" className="ghost-button ghost-button-small" onClick={resetLibraryDiscovery}>
+                  Reset
+                </button>
+              </div>
+              <div className="sidebar-stat-row">
+                <div className="sidebar-stat-pill"><span>Creators</span><strong>{filteredLibraryCreators.length}</strong></div>
+                <div className="sidebar-stat-pill"><span>Services</span><strong>{filteredLibraryTags.length}</strong></div>
+                <div className="sidebar-stat-pill"><span>Visible</span><strong>{displayItems.length}</strong></div>
               </div>
               <div className="simpcity-nav-actions">
                 <button
@@ -1401,8 +1798,32 @@ function App() {
         )}
 
         <main className="content-main">
+          {!loading && !error && (
+            <section className="results-overview-card">
+              <div className="results-overview-head">
+                <div>
+                  <p className="modal-kicker">Now exploring</p>
+                  <h3>{overviewTitle}</h3>
+                  <p>{overviewSubtitle}</p>
+                </div>
+                <div className="results-metric-row">
+                  {overviewMetrics.map((metric) => (
+                    <div key={metric.label} className="results-metric-pill">
+                      <span>{metric.label}</span>
+                      <strong>{metric.value}</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
           {loading && <div className="state-box">Loading media...</div>}
           {!loading && error && <div className="state-box error">{error}</div>}
+          {!loading && !error && source === 'simpcity' && simpcityStats?.thread_count > 0 && simpcityStats?.media_count === 0 && (
+            <div className="state-box error">
+              SimpCity thread pages are currently returning a guest login wall, so the index only has thread metadata. Add SIMPCITY_COOKIE in backend/.env from a normal logged-in browser session, then rerun the crawl to index thread media and Bunkr links.
+            </div>
+          )}
           {!loading && !error && source === 'simpcity' && simpcityView === 'threads' && simpcityThreads.length === 0 && (
             <div className="state-box">No indexed SimpCity threads found for this filter set.</div>
           )}
@@ -1429,12 +1850,32 @@ function App() {
                       Open thread
                     </a>
                   </div>
-                  <GalleryGrid items={displayItems} onOpen={setActivePost} />
+                  <GalleryGrid
+                    items={displayItems}
+                    activePost={activePost}
+                    onOpen={toggleActivePost}
+                    onCloseActive={() => setActivePost(null)}
+                    onPrevPost={openPreviousPost}
+                    onNextPost={openNextPost}
+                    onOpenAuthorGallery={handleOpenAuthorGallery}
+                    onAddToQueue={addToQueue}
+                    canNavigate={navigationItems.length > 1}
+                  />
                 </section>
               )}
             </>
           ) : (
-            <GalleryGrid items={displayItems} onOpen={setActivePost} />
+            <GalleryGrid
+              items={displayItems}
+              activePost={activePost}
+              onOpen={toggleActivePost}
+              onCloseActive={() => setActivePost(null)}
+              onPrevPost={openPreviousPost}
+              onNextPost={openNextPost}
+              onOpenAuthorGallery={handleOpenAuthorGallery}
+              onAddToQueue={addToQueue}
+              canNavigate={navigationItems.length > 1}
+            />
           )}
 
           {!loading && currentAfter && <div ref={loadMoreSentinelRef} className="infinite-scroll-sentinel" aria-hidden="true" />}
@@ -1443,27 +1884,13 @@ function App() {
 
         {source === 'reddit' && (
           <aside className="sidebar-rail sidebar-rail-right">
-            <section className="sidebar-card top-picks-sidebar">
-              <div className="sidebar-section-head">
-                <div>
-                  <h3>Top picks</h3>
-                  <p>Fast jumps into high-volume feeds.</p>
-                </div>
-              </div>
-              <div className="shortcut-list">
-                {visibleTopPicks.map((name) => (
-                  <button
-                    key={name}
-                    type="button"
-                    className={`shortcut-chip ${subreddit.toLowerCase() === name.toLowerCase() ? 'active' : ''}`}
-                    onClick={() => handlePickNsfwSubreddit(name)}
-                  >
-                    <span>r/{name}</span>
-                  </button>
-                ))}
-              </div>
-            </section>
-
+            <FilterSummaryCard
+              title="Current feed"
+              subtitle="Your active Reddit query and refinements."
+              items={redditSummaryItems}
+              onClearAll={resetRedditDiscovery}
+              emptyLabel="Pick a subreddit or category to start exploring."
+            />
             <section className="sidebar-card saved-searches-card">
               <div className="sidebar-section-head">
                 <div>
@@ -1516,16 +1943,89 @@ function App() {
                 <div className="sidebar-empty">Recent feed states will appear here.</div>
               )}
             </section>
+
+            <section className="sidebar-card download-queue-card">
+              <div className="sidebar-section-head">
+                <div>
+                  <h3>Download queue</h3>
+                  <p>{downloadQueue.length} item{downloadQueue.length !== 1 ? 's' : ''}</p>
+                </div>
+                {downloadQueue.length > 0 && (
+                  <button
+                    type="button"
+                    className="ghost-button ghost-button-small"
+                    onClick={() => navigator.clipboard.writeText(downloadQueue.map((i) => i.url).join('\n'))}
+                  >
+                    Copy all URLs
+                  </button>
+                )}
+              </div>
+              {downloadQueue.length === 0 ? (
+                <div className="sidebar-empty">Save media URLs to copy them in bulk.</div>
+              ) : (
+                <div className="shortcut-list shortcut-list-spacious">
+                  {downloadQueue.map((item) => (
+                    <div key={item.url} className="shortcut-row">
+                      <span className="shortcut-chip shortcut-chip-wide" title={item.url}>
+                        <span>{item.title?.substring(0, 28) || 'Media'}</span>
+                      </span>
+                      <button type="button" className="chip-dismiss" onClick={() => removeFromQueue(item.url)} aria-label="Remove">
+                        x
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
           </aside>
         )}
 
         {source === 'simpcity' && (
           <aside className="sidebar-rail sidebar-rail-right">
+            <FilterSummaryCard
+              title="Active index filters"
+              subtitle="The current SimpCity discovery state applied to the feed."
+              items={simpcitySummaryItems}
+              onClearAll={resetSimpcityDiscovery}
+              emptyLabel="Use creators, tags, hosts, or sections to narrow the index."
+            />
             <section className="sidebar-card simpcity-quick-card">
               <div className="sidebar-section-head">
                 <div>
-                  <h3>SimpCity filters</h3>
-                  <p>Tags, hosts, and thread context from the indexed crawl.</p>
+                  <h3>Refine the index</h3>
+                  <p>Use local finder boxes to cut large tag, host, and creator lists down fast.</p>
+                </div>
+              </div>
+
+              <div className="simpcity-filter-block">
+                <div className="simpcity-filter-head">
+                  <span>Creators</span>
+                  {simpcityFilters.creator && (
+                    <button type="button" className="text-button" onClick={() => updateSimpcityFilters({ creator: '' }, { switchToMedia: true })}>
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <input
+                  className="directory-search"
+                  type="text"
+                  value={simpcityCreatorQuery}
+                  placeholder="Find creators or aliases"
+                  onChange={(event) => setSimpcityCreatorQuery(event.target.value)}
+                />
+                <div className="shortcut-list simpcity-tag-list">
+                  {filteredSimpcityCreators.slice(0, 18).map((creator) => (
+                    <button
+                      key={creator.slug}
+                      type="button"
+                      className={`shortcut-chip ${simpcityFilters.creator === creator.slug ? 'active' : ''}`}
+                      onClick={() => updateSimpcityFilters({ creator: simpcityFilters.creator === creator.slug ? '' : creator.slug }, { switchToMedia: true })}
+                    >
+                      <span>{creator.name}</span>
+                      <span className="simpcity-count">{creator.mediaCount || creator.threadCount}</span>
+                    </button>
+                  ))}
+                  {filteredSimpcityCreators.length === 0 && <div className="sidebar-empty">No creators matched this SimpCity search yet.</div>}
                 </div>
               </div>
 
@@ -1538,8 +2038,15 @@ function App() {
                     </button>
                   )}
                 </div>
+                <input
+                  className="directory-search"
+                  type="text"
+                  value={simpcityHostQuery}
+                  placeholder="Filter hosts"
+                  onChange={(event) => setSimpcityHostQuery(event.target.value)}
+                />
                 <div className="shortcut-list">
-                  {simpcityHosts.slice(0, 8).map((host) => (
+                  {filteredSimpcityHosts.slice(0, 8).map((host) => (
                     <button
                       key={host.host}
                       type="button"
@@ -1561,8 +2068,15 @@ function App() {
                     </button>
                   )}
                 </div>
+                <input
+                  className="directory-search"
+                  type="text"
+                  value={simpcityTagQuery}
+                  placeholder="Filter tags"
+                  onChange={(event) => setSimpcityTagQuery(event.target.value)}
+                />
                 <div className="shortcut-list simpcity-tag-list">
-                  {simpcityTags.slice(0, 18).map((tag) => (
+                  {filteredSimpcityTags.slice(0, 18).map((tag) => (
                     <button
                       key={tag.slug}
                       type="button"
@@ -1572,6 +2086,7 @@ function App() {
                       <span>{tag.name}</span>
                     </button>
                   ))}
+                  {filteredSimpcityTags.length === 0 && <div className="sidebar-empty">No tags matched this SimpCity search yet.</div>}
                 </div>
               </div>
             </section>
@@ -1590,7 +2105,8 @@ function App() {
                     {activeSimpcityThread.category || 'SimpCity'} / {activeSimpcityThread.section || 'Thread'}
                   </p>
                   <h4>{activeSimpcityThread.title}</h4>
-                  <p className="meta-line">by {activeSimpcityThread.author || 'simpcity'}</p>
+                  <p className="meta-line">Creator: {activeSimpcityThread.creator || activeSimpcityThread.author || 'simpcity'}</p>
+                  <p className="meta-line">Forum poster: {activeSimpcityThread.threadAuthor || 'simpcity'}</p>
                   <p className="meta-line meta-line-secondary">
                     {activeSimpcityThread.mediaCount || simpcityThreadDetail?.media?.length || 0} media - {activeSimpcityThread.replyCount || 0} replies
                   </p>
@@ -1616,6 +2132,13 @@ function App() {
 
         {source === 'library' && (
           <aside className="sidebar-rail sidebar-rail-right">
+            <FilterSummaryCard
+              title="Current discovery"
+              subtitle="The active Coomer query and all applied filters."
+              items={librarySummaryItems}
+              onClearAll={resetLibraryDiscovery}
+              emptyLabel="Search a keyword and then narrow it by creator or service."
+            />
             <section className="sidebar-card top-picks-sidebar">
               <div className="sidebar-section-head">
                 <div>
@@ -1687,19 +2210,8 @@ function App() {
           </aside>
         )}
       </div>
+      )}
 
-      <LightboxModal
-        post={activePost}
-        onClose={() => setActivePost(null)}
-        onPrevPost={openPreviousPost}
-        onNextPost={openNextPost}
-        onFirstPost={openFirstPost}
-        onLastPost={openLastPost}
-        onOpenAuthorGallery={handleOpenAuthorGallery}
-        canNavigate={navigationItems.length > 1}
-        enableWheelNavigation={activePost?.type === 'video' && navigationItems.length > 1}
-        nextVideoToPrebuffer={nextVideoToPrebuffer}
-      />
     </div>
   );
 }

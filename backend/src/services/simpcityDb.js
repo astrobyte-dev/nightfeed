@@ -42,6 +42,8 @@ db.exec(`
     thread_url TEXT NOT NULL UNIQUE,
     title TEXT NOT NULL,
     author TEXT,
+    creator_name TEXT,
+    creator_slug TEXT,
     created_at TEXT,
     updated_at TEXT,
     reply_count INTEGER NOT NULL DEFAULT 0,
@@ -107,6 +109,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_thread_tags_tag_id ON simpcity_thread_tags(tag_id);
 `);
 
+function ensureTextColumn(tableName, columnName) {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  if (columns.some((column) => column.name === columnName)) return;
+  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} TEXT`);
+}
+
+ensureTextColumn('simpcity_threads', 'creator_name');
+ensureTextColumn('simpcity_threads', 'creator_slug');
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_threads_creator_slug ON simpcity_threads(creator_slug);
+  CREATE INDEX IF NOT EXISTS idx_threads_creator_name ON simpcity_threads(creator_name);
+`);
+
 const statements = {
   insertCategory: db.prepare(`
     INSERT INTO simpcity_categories (slug, name, position, updated_at)
@@ -134,13 +150,15 @@ const statements = {
   getSectionBySlug: db.prepare('SELECT id FROM simpcity_sections WHERE slug = ?'),
   insertThread: db.prepare(`
     INSERT INTO simpcity_threads (
-      section_id, thread_url, title, author, created_at, updated_at, reply_count, media_count,
+      section_id, thread_url, title, author, creator_name, creator_slug, created_at, updated_at, reply_count, media_count,
       cover_image_url, category_name, section_name, last_crawled_at, updated_record_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(thread_url) DO UPDATE SET
       section_id = excluded.section_id,
       title = excluded.title,
       author = excluded.author,
+      creator_name = excluded.creator_name,
+      creator_slug = excluded.creator_slug,
       created_at = excluded.created_at,
       updated_at = excluded.updated_at,
       reply_count = excluded.reply_count,
@@ -221,6 +239,8 @@ export function upsertThread(thread) {
     thread.threadUrl,
     thread.title,
     thread.author || null,
+    thread.creatorName || null,
+    thread.creatorSlug || null,
     thread.createdAt || null,
     thread.updatedAt || null,
     thread.replyCount || 0,
@@ -326,7 +346,7 @@ export function getSimpcityHosts(limit = 24) {
   `).all(limit);
 }
 
-export function getSimpcityThreads({ category, section, author, tag, search, limit = 40, offset = 0 }) {
+export function getSimpcityThreads({ category, section, author, creator, tag, search, limit = 40, offset = 0 }) {
   const filters = [];
   const params = [];
   let joinTags = '';
@@ -344,13 +364,17 @@ export function getSimpcityThreads({ category, section, author, tag, search, lim
     filters.push('s.slug = ?');
     params.push(section);
   }
+  if (creator) {
+    filters.push('(th.creator_slug = ? OR LOWER(COALESCE(th.creator_name, th.title)) = LOWER(?))');
+    params.push(creator, creator);
+  }
   if (author) {
-    filters.push('LOWER(th.author) = LOWER(?)');
-    params.push(author);
+    filters.push("(th.creator_slug = ? OR LOWER(COALESCE(th.creator_name, th.title)) = LOWER(?) OR LOWER(COALESCE(th.author, '')) = LOWER(?))");
+    params.push(author, author, author);
   }
   if (search) {
-    filters.push('(LOWER(th.title) LIKE LOWER(?) OR LOWER(COALESCE(th.author, \'\')) LIKE LOWER(?))');
-    params.push(`%${search}%`, `%${search}%`);
+    filters.push("(LOWER(th.title) LIKE LOWER(?) OR LOWER(COALESCE(th.author, '')) LIKE LOWER(?) OR LOWER(COALESCE(th.creator_name, th.title)) LIKE LOWER(?))");
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
   }
 
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
@@ -359,7 +383,9 @@ export function getSimpcityThreads({ category, section, author, tag, search, lim
       th.id,
       th.title,
       th.thread_url,
-      th.author,
+      th.author AS thread_author,
+      th.creator_name,
+      th.creator_slug,
       th.created_at,
       th.updated_at,
       th.reply_count,
@@ -382,7 +408,7 @@ export function getSimpcityThreads({ category, section, author, tag, search, lim
   return rows;
 }
 
-export function countSimpcityThreads({ category, section, author, tag, search }) {
+export function countSimpcityThreads({ category, section, author, creator, tag, search }) {
   const filters = [];
   const params = [];
   let joinTags = '';
@@ -399,13 +425,17 @@ export function countSimpcityThreads({ category, section, author, tag, search })
     filters.push('s.slug = ?');
     params.push(section);
   }
+  if (creator) {
+    filters.push('(th.creator_slug = ? OR LOWER(COALESCE(th.creator_name, th.title)) = LOWER(?))');
+    params.push(creator, creator);
+  }
   if (author) {
-    filters.push('LOWER(th.author) = LOWER(?)');
-    params.push(author);
+    filters.push("(th.creator_slug = ? OR LOWER(COALESCE(th.creator_name, th.title)) = LOWER(?) OR LOWER(COALESCE(th.author, '')) = LOWER(?))");
+    params.push(author, author, author);
   }
   if (search) {
-    filters.push('(LOWER(th.title) LIKE LOWER(?) OR LOWER(COALESCE(th.author, \'\')) LIKE LOWER(?))');
-    params.push(`%${search}%`, `%${search}%`);
+    filters.push("(LOWER(th.title) LIKE LOWER(?) OR LOWER(COALESCE(th.author, '')) LIKE LOWER(?) OR LOWER(COALESCE(th.creator_name, th.title)) LIKE LOWER(?))");
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
   }
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
   return db.prepare(`
@@ -418,7 +448,7 @@ export function countSimpcityThreads({ category, section, author, tag, search })
   `).get(...params)?.count || 0;
 }
 
-export function getSimpcityMedia({ category, section, tag, author, mediaType, sourceHost, search, limit = 40, offset = 0 }) {
+export function getSimpcityMedia({ category, section, tag, author, creator, mediaType, sourceHost, search, limit = 40, offset = 0 }) {
   const filters = [];
   const params = [];
   let joinTags = '';
@@ -435,9 +465,13 @@ export function getSimpcityMedia({ category, section, tag, author, mediaType, so
     filters.push('s.slug = ?');
     params.push(section);
   }
+  if (creator) {
+    filters.push('(th.creator_slug = ? OR LOWER(COALESCE(th.creator_name, th.title)) = LOWER(?))');
+    params.push(creator, creator);
+  }
   if (author) {
-    filters.push('LOWER(th.author) = LOWER(?)');
-    params.push(author);
+    filters.push("(th.creator_slug = ? OR LOWER(COALESCE(th.creator_name, th.title)) = LOWER(?) OR LOWER(COALESCE(th.author, '')) = LOWER(?))");
+    params.push(author, author, author);
   }
   if (mediaType && mediaType !== 'all') {
     filters.push('m.media_type = ?');
@@ -448,8 +482,8 @@ export function getSimpcityMedia({ category, section, tag, author, mediaType, so
     params.push(sourceHost);
   }
   if (search) {
-    filters.push('(LOWER(th.title) LIKE LOWER(?) OR LOWER(COALESCE(m.title, \'\')) LIKE LOWER(?))');
-    params.push(`%${search}%`, `%${search}%`);
+    filters.push("(LOWER(th.title) LIKE LOWER(?) OR LOWER(COALESCE(m.title, '')) LIKE LOWER(?) OR LOWER(COALESCE(th.creator_name, th.title)) LIKE LOWER(?))");
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
   }
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
 
@@ -471,7 +505,9 @@ export function getSimpcityMedia({ category, section, tag, author, mediaType, so
       th.id AS thread_id,
       th.title AS thread_title,
       th.thread_url,
-      th.author,
+      th.author AS thread_author,
+      th.creator_name,
+      th.creator_slug,
       th.created_at,
       th.updated_at,
       th.reply_count,
@@ -513,8 +549,8 @@ export function countSimpcityMedia(filters) {
     params.push(filters.section);
   }
   if (filters.author) {
-    clauses.push('LOWER(th.author) = LOWER(?)');
-    params.push(filters.author);
+    clauses.push("(th.creator_slug = ? OR LOWER(COALESCE(th.creator_name, th.title)) = LOWER(?) OR LOWER(COALESCE(th.author, '')) = LOWER(?))");
+    params.push(filters.author, filters.author, filters.author);
   }
   if (filters.mediaType && filters.mediaType !== 'all') {
     clauses.push('m.media_type = ?');
@@ -525,8 +561,8 @@ export function countSimpcityMedia(filters) {
     params.push(filters.sourceHost);
   }
   if (filters.search) {
-    clauses.push('(LOWER(th.title) LIKE LOWER(?) OR LOWER(COALESCE(m.title, \'\')) LIKE LOWER(?))');
-    params.push(`%${filters.search}%`, `%${filters.search}%`);
+    clauses.push("(LOWER(th.title) LIKE LOWER(?) OR LOWER(COALESCE(m.title, '')) LIKE LOWER(?) OR LOWER(COALESCE(th.creator_name, th.title)) LIKE LOWER(?))");
+    params.push(`%${filters.search}%`, `%${filters.search}%`, `%${filters.search}%`);
   }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   return db.prepare(`
@@ -546,7 +582,9 @@ export function getSimpcityThreadById(threadId) {
       th.id,
       th.title,
       th.thread_url,
-      th.author,
+      th.author AS thread_author,
+      th.creator_name,
+      th.creator_slug,
       th.created_at,
       th.updated_at,
       th.reply_count,
@@ -580,6 +618,31 @@ export function getSimpcityThreadById(threadId) {
   `).all(threadId);
 
   return { ...thread, tags, media };
+}
+
+export function getSimpcityCreators({ search = '', limit = 60 } = {}) {
+  const filters = ["COALESCE(th.creator_name, th.title) <> ''", 'COALESCE(th.media_count, 0) > 0'];
+  const params = [];
+
+  if (search) {
+    filters.push('(LOWER(COALESCE(th.creator_name, th.title)) LIKE LOWER(?) OR LOWER(th.title) LIKE LOWER(?))');
+    params.push(`%${search}%`, `%${search}%`);
+  }
+
+  return db.prepare(`
+    SELECT
+      COALESCE(th.creator_slug, th.thread_url) AS creator_slug,
+      COALESCE(th.creator_name, th.title) AS creator_name,
+      COUNT(DISTINCT th.id) AS thread_count,
+      SUM(COALESCE(th.media_count, 0)) AS media_count,
+      MAX(COALESCE(th.updated_at, th.created_record_at)) AS updated_at,
+      MAX(th.cover_image_url) AS cover_image_url
+    FROM simpcity_threads th
+    WHERE ${filters.join(' AND ')}
+    GROUP BY COALESCE(th.creator_slug, th.thread_url), COALESCE(th.creator_name, th.title)
+    ORDER BY media_count DESC, thread_count DESC, creator_name COLLATE NOCASE ASC
+    LIMIT ?
+  `).all(...params, limit);
 }
 
 export function getSimpcityStats() {

@@ -122,7 +122,10 @@ function buildRedditAudioCandidates(video) {
   if (!baseUrl) return [];
 
   const candidateNames = ['DASH_AUDIO_128.mp4', 'DASH_AUDIO_64.mp4', 'DASH_AUDIO.mp4'];
-  return candidateNames.map((name) => appendSearchParams(`${baseUrl}/${name}`, fallbackUrl || dashUrl || hlsUrl));
+  return candidateNames.map((name) => {
+    const rawUrl = appendSearchParams(`${baseUrl}/${name}`, fallbackUrl || dashUrl || hlsUrl);
+    return `/api/reddit/audio-proxy?url=${encodeURIComponent(rawUrl)}`;
+  });
 }
 
 function extractEmbedSrc(html) {

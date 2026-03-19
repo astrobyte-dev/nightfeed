@@ -195,10 +195,26 @@ Supported SimpCity filters include:
 - `category`
 - `section`
 - `tag`
+- `creator`
 - `author`
 - `search`
 - `mediaType`
 - `sourceHost`
+
+## SimpCity Thread Access
+
+SimpCity forum listings are publicly readable, but individual creator threads may return a login wall to guest requests.
+
+When that happens, Nightfeed can still index:
+
+- categories
+- sections
+- thread titles
+- inferred creator names from thread titles
+
+But full media extraction from thread bodies, including Bunkr mirrors linked inside those threads, requires a normal logged-in session cookie on your own machine.
+
+Set `SIMPCITY_COOKIE` in `backend/.env`, then rerun the SimpCity crawl.
 
 ## Reddit Media Handling
 

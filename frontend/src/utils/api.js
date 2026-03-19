@@ -175,12 +175,25 @@ export async function fetchSimpcityTags(limit = 80) {
   return response.json();
 }
 
-export async function fetchSimpcityThreads({ category = '', section = '', tag = '', author = '', search = '', after, limit = 24 }) {
+export async function fetchSimpcityCreators({ search = '', limit = 60 } = {}) {
+  const url = new URL('/api/simpcity/creators', API_BASE_URL);
+  if (search) url.searchParams.set('search', search);
+  url.searchParams.set('limit', String(limit));
+  const response = await fetch(url.toString());
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || 'Failed to fetch SimpCity creators');
+  }
+  return response.json();
+}
+
+export async function fetchSimpcityThreads({ category = '', section = '', tag = '', author = '', creator = '', search = '', after, limit = 24 }) {
   const url = new URL('/api/simpcity/threads', API_BASE_URL);
   if (category) url.searchParams.set('category', category);
   if (section) url.searchParams.set('section', section);
   if (tag) url.searchParams.set('tag', tag);
   if (author) url.searchParams.set('author', author);
+  if (creator) url.searchParams.set('creator', creator);
   if (search) url.searchParams.set('search', search);
   if (after) url.searchParams.set('after', after);
   url.searchParams.set('limit', String(limit));
@@ -192,12 +205,13 @@ export async function fetchSimpcityThreads({ category = '', section = '', tag = 
   return response.json();
 }
 
-export async function fetchIndexedSimpcityMedia({ category = '', section = '', tag = '', author = '', search = '', mediaType = 'all', sourceHost = '', after, limit = 36 }) {
+export async function fetchIndexedSimpcityMedia({ category = '', section = '', tag = '', author = '', creator = '', search = '', mediaType = 'all', sourceHost = '', after, limit = 36 }) {
   const url = new URL('/api/simpcity/media', API_BASE_URL);
   if (category) url.searchParams.set('category', category);
   if (section) url.searchParams.set('section', section);
   if (tag) url.searchParams.set('tag', tag);
   if (author) url.searchParams.set('author', author);
+  if (creator) url.searchParams.set('creator', creator);
   if (search) url.searchParams.set('search', search);
   if (mediaType) url.searchParams.set('mediaType', mediaType);
   if (sourceHost) url.searchParams.set('sourceHost', sourceHost);

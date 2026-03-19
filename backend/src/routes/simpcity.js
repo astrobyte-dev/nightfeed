@@ -2,6 +2,7 @@ import express from 'express';
 import { crawlSimpcityIndex } from '../services/simpcityCrawler.js';
 import {
   getLatestCrawlJob,
+  getSimpcityCreators,
   getSimpcityHosts,
   getSimpcityMedia,
   getSimpcitySidebar,
@@ -35,7 +36,10 @@ function normalizeMediaRow(row) {
     source: 'simpcity',
     title: row.media_title || row.thread_title,
     permalink: row.thread_url,
-    author: row.author || 'simpcity',
+    author: row.creator_name || row.thread_title || row.thread_author || 'simpcity',
+    creator: row.creator_name || row.thread_title || row.thread_author || 'simpcity',
+    creatorSlug: row.creator_slug || null,
+    threadAuthor: row.thread_author || null,
     subreddit: row.section_name || 'simpcity',
     createdUtc: row.updated_at ? Math.floor(new Date(row.updated_at).getTime() / 1000) : null,
     score: 0,
@@ -69,7 +73,10 @@ function normalizeThreadRow(row) {
     id: row.id,
     title: row.title,
     permalink: row.thread_url,
-    author: row.author || 'simpcity',
+    author: row.creator_name || row.title || row.thread_author || 'simpcity',
+    creator: row.creator_name || row.title || row.thread_author || 'simpcity',
+    creatorSlug: row.creator_slug || null,
+    threadAuthor: row.thread_author || null,
     category: row.category_name,
     categorySlug: row.category_slug,
     section: row.section_name,
@@ -84,7 +91,7 @@ function normalizeThreadRow(row) {
 
 function ensureSeededCache() {
   const stats = getSimpcityStats();
-  if (!seeded && stats.thread_count === 0) {
+  if (!seeded && (stats.thread_count === 0 || stats.media_count === 0)) {
     seeded = true;
     crawlSimpcityIndex({ threadLimitPerSection: 8, scope: 'auto-seed' }).catch((error) => {
       console.error('[simpcity] auto-seed failed', error.message);
@@ -133,6 +140,21 @@ router.get('/tags', (req, res) => {
   res.json({ tags: getSimpcityTags(limit), hosts: getSimpcityHosts(24) });
 });
 
+router.get('/creators', (req, res) => {
+  ensureSeededCache();
+  const limit = parseLimit(req.query.limit, 60);
+  const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+  const items = getSimpcityCreators({ search, limit }).map((row) => ({
+    slug: row.creator_slug,
+    name: row.creator_name,
+    threadCount: row.thread_count || 0,
+    mediaCount: row.media_count || 0,
+    updatedAt: row.updated_at || null,
+    coverImageUrl: row.cover_image_url || null
+  }));
+  res.json({ items });
+});
+
 router.get('/threads', (req, res) => {
   ensureSeededCache();
   const limit = parseLimit(req.query.limit, 24);
@@ -141,6 +163,7 @@ router.get('/threads', (req, res) => {
     category: typeof req.query.category === 'string' ? req.query.category : '',
     section: typeof req.query.section === 'string' ? req.query.section : '',
     author: typeof req.query.author === 'string' ? req.query.author : '',
+    creator: typeof req.query.creator === 'string' ? req.query.creator : '',
     tag: typeof req.query.tag === 'string' ? req.query.tag : '',
     search: typeof req.query.search === 'string' ? req.query.search : ''
   };
@@ -158,6 +181,7 @@ router.get('/media', (req, res) => {
     category: typeof req.query.category === 'string' ? req.query.category : '',
     section: typeof req.query.section === 'string' ? req.query.section : '',
     author: typeof req.query.author === 'string' ? req.query.author : '',
+    creator: typeof req.query.creator === 'string' ? req.query.creator : '',
     tag: typeof req.query.tag === 'string' ? req.query.tag : '',
     search: typeof req.query.search === 'string' ? req.query.search : '',
     mediaType: typeof req.query.mediaType === 'string' ? req.query.mediaType : 'all',
@@ -184,7 +208,9 @@ router.get('/thread/:id', (req, res) => {
       thread_id: thread.id,
       thread_title: thread.title,
       thread_url: thread.thread_url,
-      author: thread.author,
+      thread_author: thread.thread_author,
+      creator_name: thread.creator_name,
+      creator_slug: thread.creator_slug,
       updated_at: thread.updated_at,
       reply_count: thread.reply_count,
       category_name: thread.category_name,
