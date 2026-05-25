@@ -77,6 +77,18 @@ export const NSFW_DIRECTORY = [
   {
     category: 'Feet',
     items: ['feetonglass','feetpicsfits','FeetPoseBlowjobs','FeetR4R','FeetTouching','FeetToesandSoles','FeetToesAndSocks','Feetupassdown','Feetup','FeetUnleashed','FeetUpLookDown','FeetUpCowgirl','feetvids','Feetview','FeetWish','FeetWYR','feetwithtoes','FeetWashSixHands','Feet_NSFW','curledfeetsies']
+  },
+  {
+    category: 'Audio',
+    items: ['audiosgonewild','gonewildaudio','gwasapphic','gonewildaudible','gonewildaudiogay','gonewildaudiotrans','pillowtalkaudio','KinkyPillowTalkAudio','poetryreading','recordings','audioporn4chixxx','therealmoferoticaudio','audiochills','darksideplayground','erotichypnosis','Vanillaaudio','erotcicaudiostories','gonewildaudiocontent','GWAGW','gwabackstage']
+  },
+  {
+    category: 'ASMR',
+    items: ['ASMR','SexyAsmrWomenn','nsfwasmr','MoreSexyASMRGirls','ASMRgirls','everythingASMR']
+  },
+  {
+    category: 'Erotic Writing',
+    items: ['gwascriptguild','eroticliterature','erotica','dirtywritingprompts','dirtystorywriting','sexystories','ASMRScriptHaven','eroticaauthors']
   }
 ].map((section) => ({
   category: section.category,

@@ -1,7 +1,7 @@
-import dotenv from 'dotenv';
+// IMPORTANT: 'dotenv/config' must be the very first import so that
+// process.env vars are populated before any other module reads them.
+import 'dotenv/config';
 import app from './app.js';
-
-dotenv.config();
 
 const port = Number(process.env.PORT || 3001);
 

@@ -1,20 +1,31 @@
+# Dependencies
 node_modules/
-dist/
-frontend/dist/
 
+# Secrets & local environment — NEVER commit
 .env
-**/.env
-.env.local
-**/.env.local
-.env.*.local
+.env.*
+!.env.example
+*.cookies.txt
+simpcity_cookies.txt
 
-.DS_Store
+# Monorepo uses the root lockfile; ignore per-package locks
+backend/package-lock.json
+frontend/package-lock.json
+
+# Build output
+dist/
+build/
+
+# Logs & debug
+*.log
 npm-debug.log*
 
-launcher_build/
-*.log
+# OS / editor cruft
+.DS_Store
+Thumbs.db
 
-backend/data/
-*.sqlite
-*.sqlite-shm
-*.sqlite-wal
+# Claude Code local config
+.claude/
+
+# Archives
+*.rar

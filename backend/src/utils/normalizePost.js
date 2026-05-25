@@ -361,6 +361,19 @@ export function normalizePost(post) {
     };
   }
 
+  if (externalVideo?.externalVideoEmbedUrl) {
+    return {
+      ...base,
+      type: 'video',
+      mediaUrl: externalVideo.externalVideoEmbedUrl,
+      videoSourceKind: 'embed',
+      videoIsPreviewSource: false,
+      videoAudioUrls: [],
+      canPlayFullAudioInApp: true,
+      thumbnail: base.thumbnail || externalVideo.externalVideoPosterUrl || null
+    };
+  }
+
   const imageUrl = normalizeImage(post);
   if (imageUrl) {
     return { ...base, type: 'image', mediaUrl: imageUrl };

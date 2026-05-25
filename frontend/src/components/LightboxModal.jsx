@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { fetchRedditComments, fetchRedgifsMedia } from '../utils/api';
+import { fetchRedditComments, getRedgifsStreamUrl } from '../utils/api';
 import { formatDuration, formatPostDate, formatScore } from '../utils/format';
 import { canDownloadUrl, getModalItems, getTypeBadge, getTypeHelper, isPreviewVideo } from '../utils/media';
 import VideoPlayer from './VideoPlayer';
+import { useFocusTrap } from '../hooks/useFocusTrap';
+import { useToast } from './Toast';
 
 const isDev = import.meta.env.DEV;
 
@@ -14,7 +16,7 @@ function renderCommentBody(text) {
   return parts.map((part, index) => {
     if (/^https?:\/\/[^\s]+$/i.test(part)) {
       return (
-        <a key={'link-' + index} href={part} target="_blank" rel="noreferrer" className="comment-link">
+        <a key={'link-' + index} href={part} target="_blank" rel="noopener noreferrer" className="comment-link">
           {part}
         </a>
       );
@@ -55,6 +57,68 @@ function isTypingTarget(target) {
   return tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
 }
 
+function buildAutoplayUrl(rawSrc) {
+  if (!rawSrc) return rawSrc;
+  try {
+    const url = new URL(rawSrc, 'https://www.example.com');
+    if (/youtube(-nocookie)?\.com$/i.test(url.hostname) || /youtu\.be$/i.test(url.hostname)) {
+      url.searchParams.set('autoplay', '1');
+      url.searchParams.set('mute', '0');
+      url.searchParams.set('playsinline', '1');
+      url.searchParams.set('rel', '0');
+      url.searchParams.set('modestbranding', '1');
+    } else if (/vimeo\.com$/i.test(url.hostname) || /player\.vimeo\.com$/i.test(url.hostname)) {
+      url.searchParams.set('autoplay', '1');
+      url.searchParams.set('muted', '0');
+      url.searchParams.set('dnt', '1');
+    } else if (/streamable\.com$/i.test(url.hostname)) {
+      url.searchParams.set('autoplay', '1');
+      url.searchParams.set('muted', '0');
+    } else if (/redgifs\.com$/i.test(url.hostname)) {
+      url.searchParams.set('autoplay', '1');
+      url.searchParams.set('controls', '1');
+      url.searchParams.set('muted', '0');
+    }
+    return url.toString();
+  } catch {
+    return rawSrc;
+  }
+}
+
+function IframeEmbed({ src, title, width, height }) {
+  const [loaded, setLoaded] = useState(false);
+  const finalSrc = useMemo(() => buildAutoplayUrl(src), [src]);
+
+  const w = Number(width) || 16;
+  const h = Number(height) || 9;
+  const isPortrait = h > w;
+  const frameStyle = isPortrait
+    ? { height: '100%', width: 'auto', aspectRatio: `${w} / ${h}` }
+    : { width: '100%', height: 'auto', aspectRatio: `${w} / ${h}` };
+
+  return (
+    <div className="modal-iframe-wrap">
+      <div className="modal-iframe-frame" style={frameStyle}>
+        {!loaded && (
+          <div className="modal-iframe-loading" aria-hidden="true">
+            <span className="spinner" />
+          </div>
+        )}
+        <iframe
+          src={finalSrc}
+          title={title || 'External video'}
+          className="modal-iframe"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+          loading="eager"
+          referrerPolicy="no-referrer-when-downgrade"
+          onLoad={() => setLoaded(true)}
+        />
+      </div>
+    </div>
+  );
+}
+
 function LightboxModal({
   post,
   onClose,
@@ -65,8 +129,11 @@ function LightboxModal({
   onLastPost,
   canNavigate,
   enableWheelNavigation,
-  nextVideoToPrebuffer
+  nextVideoToPrebuffer,
+  isFavorited,
+  onToggleFavorite
 }) {
+  const toast = useToast();
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
   const [isCompactModal, setIsCompactModal] = useState(false);
@@ -75,9 +142,7 @@ function LightboxModal({
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [commentsError, setCommentsError] = useState('');
   const [comments, setComments] = useState([]);
-  const [playerDiagnostics, setPlayerDiagnostics] = useState(null);
   const [persistMuted, setPersistMuted] = useState(null);
-  const [useDirectEmbedPlayback, setUseDirectEmbedPlayback] = useState(false);
   const [resolvedEmbedPlayback, setResolvedEmbedPlayback] = useState(null);
   const [embedPlaybackError, setEmbedPlaybackError] = useState('');
   const lastWheelAt = useRef(0);
@@ -89,6 +154,10 @@ function LightboxModal({
   const items = useMemo(() => getModalItems(post), [post]);
   const isGalleryPost = post?.type === 'gallery' && items.length > 1;
   const current = items[index];
+  const companionAudioUrls = useMemo(
+    () => current?.audioUrls || post?.videoAudioUrls || [],
+    [current?.audioUrls, post?.videoAudioUrls]
+  );
 
   useEffect(() => {
     setIndex(0);
@@ -97,40 +166,43 @@ function LightboxModal({
     setCommentsLoading(false);
     setCommentsError('');
     setComments([]);
-    setPlayerDiagnostics(null);
-    setUseDirectEmbedPlayback(false);
     setResolvedEmbedPlayback(null);
     setEmbedPlaybackError('');
   }, [post?.id]);
 
+  const isRedgifsEmbed = current?.kind === 'embed' && current?.provider === 'RedGIFs' && Boolean(current?.id);
+  const [redgifsProxyFailed, setRedgifsProxyFailed] = useState(false);
+  const isIframeEmbed = current?.kind === 'embed'
+    && Boolean(current?.url)
+    && (!isRedgifsEmbed || redgifsProxyFailed);
+  const redgifsStreamUrl = useMemo(
+    () => (isRedgifsEmbed && !redgifsProxyFailed ? getRedgifsStreamUrl(current.id) : null),
+    [isRedgifsEmbed, redgifsProxyFailed, current?.id]
+  );
+
   useEffect(() => {
-    if (!useDirectEmbedPlayback || current?.kind !== 'embed' || current?.provider !== 'RedGIFs' || !current?.id) {
-      setResolvedEmbedPlayback(null);
-      setEmbedPlaybackError('');
-      return undefined;
-    }
+    setResolvedEmbedPlayback(null);
+    setEmbedPlaybackError('');
+    setRedgifsProxyFailed(false);
+  }, [current]);
 
+  useEffect(() => {
+    if (!redgifsStreamUrl) return undefined;
     let cancelled = false;
-
-    (async () => {
-      try {
-        setEmbedPlaybackError('');
-        const payload = await fetchRedgifsMedia(current.id);
-        if (!cancelled) {
-          setResolvedEmbedPlayback(payload);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setResolvedEmbedPlayback(null);
-          setEmbedPlaybackError(error.message || 'Unable to load in-app controls for this video.');
-        }
-      }
-    })();
-
+    const controller = new AbortController();
+    fetch(redgifsStreamUrl, { method: 'HEAD', signal: controller.signal })
+      .then((response) => {
+        if (cancelled) return;
+        if (!response.ok) setRedgifsProxyFailed(true);
+      })
+      .catch(() => {
+        if (!cancelled) setRedgifsProxyFailed(true);
+      });
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [useDirectEmbedPlayback, current]);
+  }, [redgifsStreamUrl]);
 
   useEffect(() => {
     function updateViewport() {
@@ -162,8 +234,10 @@ function LightboxModal({
       previousFocusRef.current?.focus?.();
     };
   }, [post]);
+
+  useFocusTrap(modalRef, Boolean(post));
   const canDownload = canDownloadUrl(current?.url);
-  const canOpenAuthorGallery = post?.source === 'reddit' || post?.source === 'instagram' || post?.source === 'library';
+  const canOpenAuthorGallery = post?.source === 'reddit' || post?.source === 'library';
   const canShowComments = post?.source === 'reddit' && post?.permalink;
   const isTikTokMobileMode = isMobileViewport && current?.kind === 'video' && enableWheelNavigation;
   const isPreview = isPreviewVideo(post);
@@ -173,20 +247,15 @@ function LightboxModal({
   const needsRedditHandoff = post?.source === 'reddit' && post?.type === 'video' && post?.canPlayFullAudioInApp === false;
   const isVideo = current?.kind === 'video';
   const isAudio = current?.kind === 'audio';
-  const hasDirectEmbedControls = hasExternalVideoEmbed && useDirectEmbedPlayback && hasResolvedEmbedPlayback;
+  const hasDirectEmbedControls = hasExternalVideoEmbed && hasResolvedEmbedPlayback;
   const canControlPlayback = isVideo || hasDirectEmbedControls;
   const isPortraitEmbed = hasExternalVideoEmbed && Number(current?.height || 0) > Number(current?.width || 0);
   const embedWidth = isPortraitEmbed ? 'min(100%, 440px)' : 'min(100%, 760px)';
   const previewInfo = isPreview
-    ? hasDirectEmbedControls
+    ? hasExternalVideoEmbed
       ? {
-          label: `${current?.provider || post?.externalVideoProvider || 'External'} in-app controls`,
-          copy: 'This video is using the in-app player, so wheel navigation, sticky unmute, click pause, and spacebar playback all work over the video.'
-        }
-      : hasExternalVideoEmbed
-      ? {
-          label: `${current?.provider || post?.externalVideoProvider || 'External'} video with audio`,
-          copy: 'This Reddit post uses an external embedded player in the modal so you get the original source playback with sound.'
+          label: `${current?.provider || post?.externalVideoProvider || 'External'} video`,
+          copy: 'Playing directly from the source with full controls.'
         }
       : post?.canPlayFullAudioInApp
       ? {
@@ -207,144 +276,9 @@ function LightboxModal({
       : null;
   const typeLabel = getTypeBadge(post);
   const typeHelper = getTypeHelper(post);
-  const primaryActionLabel = post?.source === 'reddit' ? 'Open on Reddit' : post?.source === 'simpcity' ? 'Open thread' : post?.source === 'library' ? 'Open on Coomer' : 'Open Original Post';
-  const modalStyle = isCompactModal
-    ? {
-        width: '100vw',
-        height: '100vh',
-        maxHeight: 'none',
-        borderRadius: 0,
-        display: 'grid',
-        gridTemplateColumns: '1fr',
-        gridTemplateRows: 'minmax(44vh, 1fr) auto',
-        background: 'linear-gradient(180deg, rgba(8, 16, 28, 0.98), rgba(5, 11, 20, 0.99))'
-      }
-    : {
-        width: 'min(1240px, calc(100vw - 48px))',
-        maxWidth: 'calc(100vw - 32px)',
-        maxHeight: 'calc(100vh - 40px)',
-        display: 'grid',
-        gridTemplateColumns: 'minmax(0, 1fr) minmax(320px, 336px)',
-        gap: 0,
-        overflow: 'hidden',
-        background: 'linear-gradient(180deg, rgba(8, 16, 28, 0.98), rgba(5, 11, 20, 0.99))'
-      };
-  const mediaColumnStyle = isCompactModal
-    ? {
-        minWidth: 0,
-        minHeight: 0,
-        display: 'grid',
-        gridTemplateRows: 'minmax(0, 1fr) auto',
-        borderRight: 0,
-        borderBottom: '1px solid rgba(255, 255, 255, 0.07)',
-        background: 'radial-gradient(circle at top, rgba(15, 32, 56, 0.5), rgba(3, 9, 18, 0.96))'
-      }
-    : {
-        minWidth: 0,
-        minHeight: 0,
-        display: 'grid',
-        gridTemplateRows: 'minmax(0, 1fr) auto',
-        borderRight: '1px solid rgba(255, 255, 255, 0.07)',
-        background: 'radial-gradient(circle at top, rgba(15, 32, 56, 0.5), rgba(3, 9, 18, 0.96))'
-      };
-  const infoPanelStyle = isCompactModal
-    ? {
-        width: '100%',
-        minWidth: 0,
-        minHeight: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '16px',
-        padding: '18px',
-        background: 'linear-gradient(180deg, rgba(8, 16, 28, 0.97), rgba(4, 10, 18, 0.99))',
-        overflow: 'auto',
-        paddingBottom: '28px'
-      }
-    : {
-        minWidth: '320px',
-        width: 'min(336px, 28vw)',
-        minHeight: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '18px',
-        padding: '24px',
-        background: 'linear-gradient(180deg, rgba(8, 16, 28, 0.97), rgba(4, 10, 18, 0.99))',
-        overflow: 'auto',
-        paddingBottom: '32px'
-      };
-  const mediaFrameStyle = {
-    position: 'relative',
-    minHeight: 0,
-    display: 'grid',
-    placeItems: 'center',
-    alignContent: 'center',
-    padding: isCompactModal ? '14px' : '24px',
-    overflow: 'auto'
-  };
-  const mediaControlsStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '12px',
-    flexWrap: isCompactModal ? 'wrap' : 'nowrap',
-    padding: isCompactModal ? '14px 16px 16px' : '18px 22px 22px',
-    borderTop: '1px solid rgba(255, 255, 255, 0.06)',
-    color: 'var(--muted)',
-    fontSize: '0.88rem'
-  };
-  const infoTopStyle = {
-    display: 'flex',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: '14px'
-  };
-  const badgeStackStyle = {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '10px'
-  };
-  const metaGridStyle = {
-    display: 'grid',
-    gridTemplateColumns: isCompactModal ? '1fr' : 'repeat(2, minmax(0, 1fr))',
-    gap: '12px'
-  };
-  const surfaceCardStyle = {
-    padding: '14px 15px',
-    borderRadius: '18px',
-    border: '1px solid rgba(255, 255, 255, 0.07)',
-    background: 'rgba(255, 255, 255, 0.03)'
-  };
-  const actionsColumnStyle = {
-    display: 'grid',
-    gap: '10px'
-  };
-  const navPanelStyle = {
-    display: 'grid',
-    gap: '10px'
-  };
-  const postNavStyle = {
-    display: 'grid',
-    gridTemplateColumns: isCompactModal ? '1fr' : 'repeat(2, minmax(0, 1fr))',
-    gap: '10px'
-  };
-  const titleStyle = {
-    margin: '10px 0 0',
-    fontSize: isCompactModal ? '1.5rem' : 'clamp(1.3rem, 2vw, 1.8rem)',
-    lineHeight: 1.25,
-    letterSpacing: '-0.03em'
-  };
-  const mediaVisualStyle = {
-    display: 'block',
-    width: 'auto',
-    maxWidth: 'min(100%, 760px)',
-    maxHeight: isCompactModal ? '54vh' : 'min(72vh, 820px)',
-    borderRadius: isCompactModal ? '16px' : '22px',
-    background: '#000',
-    boxShadow: '0 28px 80px rgba(0, 0, 0, 0.34)'
-  };
+  const primaryActionLabel = post?.source === 'reddit' ? 'Open on Reddit' : post?.source === 'library' ? 'Open on Coomer' : 'Open Original Post';
   const activeSourceKind = current?.sourceKind || post?.videoSourceKind || null;
   const isDirectUrlOnly = Boolean(isVideo && !current?.hlsUrl && !current?.dashUrl && current?.url);
-  const videoLoadingState = playerDiagnostics?.loadingState || 'idle';
   const sourceActionHref = current?.pageUrl || post?.externalVideoPageUrl || post?.permalink || null;
   const sourceActionLabel = post?.externalVideoProvider ? `Open ${post.externalVideoProvider}` : 'Open Original';
 
@@ -607,36 +541,36 @@ function LightboxModal({
       <div
         ref={modalRef}
         className="modal modal-split"
-        style={modalStyle}
         onClick={(event) => event.stopPropagation()}
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label={post.title}
       >
-        <div className="modal-split-media" style={mediaColumnStyle} onWheel={handleWheel} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
-          <div className="modal-media-frame" style={mediaFrameStyle}>
-            {sourceActionHref && (
-              <a
-                href={sourceActionHref}
-                target="_blank"
-                rel="noreferrer"
-                className="modal-action-button"
-                style={{
-                  position: 'absolute',
-                  left: isCompactModal ? '14px' : '18px',
-                  top: isCompactModal ? '14px' : '18px',
-                  zIndex: 3,
-                  minWidth: 0,
-                  padding: '10px 14px',
-                  background: 'rgba(6, 14, 26, 0.84)',
-                  backdropFilter: 'blur(10px)',
-                  border: '1px solid rgba(255, 255, 255, 0.12)'
-                }}
-              >
-                {sourceActionLabel}
-              </a>
-            )}
+        <button type="button" className="modal-floating-close" onClick={onClose} aria-label="Close">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+
+        {canNavigate && (
+          <>
+            <button type="button" className="modal-floating-nav modal-floating-nav-prev" onClick={goPrevPost} aria-label="Previous post">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+            </button>
+            <button type="button" className="modal-floating-nav modal-floating-nav-next" onClick={goNextPost} aria-label="Next post">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <polyline points="9 18 15 12 9 6"/>
+              </svg>
+            </button>
+          </>
+        )}
+
+        <div className="modal-split-media" onWheel={handleWheel} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
+          <div className="modal-media-frame">
             {!current && <div className="modal-helper-copy">This item could not be rendered.</div>}
             {current?.kind === 'video' && (
               <VideoPlayer
@@ -644,7 +578,7 @@ function LightboxModal({
                 mp4Url={current.url}
                 hlsUrl={current.hlsUrl}
                 dashUrl={current.dashUrl}
-                companionAudioUrls={current.audioUrls || post?.videoAudioUrls || []}
+                companionAudioUrls={companionAudioUrls}
                 hasAudio={current.hasAudio ?? post?.videoHasAudio ?? null}
                 sourceKind={activeSourceKind}
                 posterUrl={post?.thumbnail || ''}
@@ -654,147 +588,242 @@ function LightboxModal({
                 allowUnmutedAutoplay={hasUserInteracted}
                 preferredMuted={persistMuted}
                 onMutedChange={setPersistMuted}
-                onDiagnostics={setPlayerDiagnostics}
               />
             )}
 
             {current?.kind === 'embed' && (
-              hasDirectEmbedControls ? (
+              isRedgifsEmbed && redgifsStreamUrl ? (
                 <VideoPlayer
                   ref={videoPlayerRef}
-                  mp4Url={resolvedEmbedPlayback.previewUrl || resolvedEmbedPlayback.videoUrl}
-                  hasAudio={resolvedEmbedPlayback.hasAudio ?? true}
+                  mp4Url={redgifsStreamUrl}
+                  hasAudio={true}
                   sourceKind="redgifs"
-                  posterUrl={resolvedEmbedPlayback.posterUrl || current?.posterUrl || post?.thumbnail || ''}
+                  posterUrl={current?.posterUrl || post?.thumbnail || ''}
                   className="modal-video"
                   autoPlay
                   loop
                   allowUnmutedAutoplay={hasUserInteracted}
                   preferredMuted={persistMuted}
                   onMutedChange={setPersistMuted}
-                  onDiagnostics={setPlayerDiagnostics}
+                />
+              ) : isIframeEmbed ? (
+                <IframeEmbed
+                  src={current.url}
+                  title={post.title}
+                  width={current.width}
+                  height={current.height}
                 />
               ) : (
-                <div style={{ width: embedWidth, maxWidth: '100%', display: 'grid', gap: '12px', justifyItems: 'center' }}>
-                  <div
-                    style={{
-                      position: 'relative',
-                      width: '100%',
-                      aspectRatio: current?.width && current?.height ? `${current.width} / ${current.height}` : '9 / 16',
-                      maxHeight: isCompactModal ? '56vh' : '68vh',
-                      borderRadius: isCompactModal ? '16px' : '22px',
-                      overflow: 'hidden',
-                      background: '#000',
-                      boxShadow: '0 28px 80px rgba(0, 0, 0, 0.34)'
-                    }}
-                  >
-                    <iframe
-                      src={current.url}
-                      title={`${post.title} player`}
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-                      allowFullScreen
-                      referrerPolicy="strict-origin-when-cross-origin"
-                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
-                    />
+                <div className="modal-embed-wrap" style={{ width: embedWidth }}>
+                  <div className="modal-loading">
+                    <span className="spinner" aria-hidden="true" />
+                    <span>Loading video…</span>
                   </div>
-                  {current?.provider === 'RedGIFs' && current?.id ? (
-                    <button type="button" onClick={() => setUseDirectEmbedPlayback(true)}>
-                      Enable In-App Controls
-                    </button>
-                  ) : null}
-                  {embedPlaybackError ? <p className="modal-helper-copy">{embedPlaybackError}</p> : null}
                 </div>
               )
             )}
 
-            {current?.kind === 'image' && <img src={current?.url || ''} alt={post.title} className="modal-image" style={mediaVisualStyle} />}
+            {current?.kind === 'image' && <img src={current?.url || ''} alt={post.title} className="modal-image" />}
 
             {current?.kind === 'audio' && (
-              <div className="modal-audio-wrap" style={{ width: 'min(100%, 760px)', display: 'grid', gap: '18px', justifyItems: 'center' }}>
+              <div className="modal-audio-wrap">
                 {current?.posterUrl ? (
-                  <img src={current.posterUrl} alt={post.title} className="modal-image" style={{ ...mediaVisualStyle, maxHeight: isCompactModal ? '40vh' : '48vh' }} />
+                  <img src={current.posterUrl} alt={post.title} className="modal-image" />
                 ) : (
-                  <div className="media-preview media-preview-audio-fallback" style={{ width: 'min(100%, 420px)', aspectRatio: '1 / 1', borderRadius: isCompactModal ? '16px' : '22px' }}>
+                  <div className="media-preview media-preview-audio-fallback modal-audio-fallback">
                     <span className="audio-glyph">Audio</span>
                   </div>
                 )}
-                <audio controls preload="metadata" src={current.url} style={{ width: 'min(100%, 560px)' }}>
+                <audio controls preload="metadata" src={current.url}>
                   Your browser does not support audio playback.
                 </audio>
               </div>
             )}
 
-            {nextVideoToPrebuffer?.url && (
-              <VideoPlayer mp4Url={nextVideoToPrebuffer.url} hlsUrl={nextVideoToPrebuffer.hlsUrl} dashUrl={nextVideoToPrebuffer.dashUrl} className="modal-video" prebufferOnly />
-            )}
           </div>
 
-          <div className="modal-media-controls" style={mediaControlsStyle}>
-            {items.length > 1 ? (
-              <>
-                <button type="button" onClick={handleMovePrev}>Previous item</button>
-                <span>{index + 1}/{items.length}</span>
-                <button type="button" onClick={handleMoveNext}>Next item</button>
-              </>
-            ) : (
-              <span>{canControlPlayback ? 'Click the video to play or pause.' : current?.kind === 'embed' ? 'Use the embedded player controls inside the video frame, or enable in-app controls for wheel and keyboard playback.' : current?.kind === 'audio' ? 'Listen in the built-in player without leaving the modal.' : 'Scaled to fit for distraction-free viewing.'}</span>
-            )}
-          </div>
+          {nextVideoToPrebuffer?.url && (
+            <div className="modal-prebuffer-host" aria-hidden="true">
+              <VideoPlayer mp4Url={nextVideoToPrebuffer.url} hlsUrl={nextVideoToPrebuffer.hlsUrl} dashUrl={nextVideoToPrebuffer.dashUrl} className="modal-video" prebufferOnly />
+            </div>
+          )}
+
+          {items.length > 1 && (
+            <div className="modal-media-controls">
+              <button type="button" className="modal-media-ctrl" onClick={handleMovePrev} aria-label="Previous item">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+              </button>
+              <span className="modal-media-counter">{index + 1} / {items.length}</span>
+              <button type="button" className="modal-media-ctrl" onClick={handleMoveNext} aria-label="Next item">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+              </button>
+            </div>
+          )}
         </div>
 
-        <aside className="modal-info-panel" style={infoPanelStyle}>
-          <div className="modal-info-top" style={infoTopStyle}>
-            <div>
-              <p className="modal-kicker">{post.source === 'instagram' ? `@${post.author}` : post.source === 'library' ? post.creator || 'Coomer' : post.source === 'simpcity' ? post.section || post.subreddit || 'SimpCity' : `r/${post.subreddit}`}</p>
-              <h2 style={titleStyle}>{post.title}</h2>
+        <aside className="modal-info-panel">
+          <div className="modal-info-head">
+            <p className="modal-kicker">{post.source === 'library' ? post.creator || 'Coomer' : `r/${post.subreddit}`}</p>
+            <h2 className="modal-title">{post.title}</h2>
+            <div className="modal-meta-inline">
+              <span className={`detail-badge detail-badge-${post.type}`} title={typeHelper}>{typeLabel}</span>
+              {(post.type === 'video' && post.videoDurationSec) || (post.type === 'audio' && post.duration) ? (
+                <span className="detail-badge detail-badge-muted">{formatDuration(post.type === 'audio' ? post.duration : post.videoDurationSec)}</span>
+              ) : null}
+              {post.source === 'reddit' && post.isRedditHosted ? <span className="detail-badge detail-badge-muted">Reddit-hosted</span> : null}
             </div>
-            <button type="button" className="icon-btn" onClick={onClose} aria-label="Close modal">
-              X
-            </button>
           </div>
 
-          <div className="modal-badge-stack" style={badgeStackStyle}>
-            <span className={`detail-badge detail-badge-${post.type}`} title={typeHelper}>{typeLabel}</span>
-            {(post.type === 'video' && post.videoDurationSec) || (post.type === 'audio' && post.duration) ? <span className="detail-badge">{formatDuration(post.type === 'audio' ? post.duration : post.videoDurationSec)}</span> : null}
-            {post.source === 'reddit' && post.isRedditHosted ? <span className="detail-badge">Reddit-hosted</span> : null}
-          </div>
-
-          <div className="modal-meta-grid" style={metaGridStyle}>
-            <div style={surfaceCardStyle}>
-              <span className="modal-meta-label">Author</span>
-              <strong>{post.source === 'library' ? post.creator || 'Coomer' : post.author}</strong>
+          <div className="modal-stat-row">
+            <div className="modal-stat">
+              <span className="modal-stat-value">{formatScore(post.score)}</span>
+              <span className="modal-stat-key">score</span>
             </div>
-            <div style={surfaceCardStyle}>
-              <span className="modal-meta-label">Score</span>
-              <strong>{formatScore(post.score)}</strong>
-            </div>
-            <div style={surfaceCardStyle}>
-              <span className="modal-meta-label">Posted</span>
-              <strong>{formatPostDate(post.createdUtc)}</strong>
-            </div>
+            <div className="modal-stat-divider" aria-hidden="true" />
             {canShowComments ? (
-              <button type="button" className="modal-stat-button" style={surfaceCardStyle} onClick={handleToggleComments}>
-                <span className="modal-meta-label">Comments</span>
-                <strong>{formatScore(post.numComments || 0)}</strong>
-                <span className="modal-stat-link">{showComments ? 'Hide comments' : 'Read comments'}</span>
+              <button type="button" className="modal-stat modal-stat-action" onClick={handleToggleComments} aria-expanded={showComments}>
+                <span className="modal-stat-value">{formatScore(post.numComments || 0)}</span>
+                <span className="modal-stat-key">{showComments ? 'hide' : 'comments'}</span>
               </button>
             ) : (
-              <div style={surfaceCardStyle}>
-                <span className="modal-meta-label">Comments</span>
-                <strong>{formatScore(post.numComments || 0)}</strong>
+              <div className="modal-stat">
+                <span className="modal-stat-value">{formatScore(post.numComments || 0)}</span>
+                <span className="modal-stat-key">comments</span>
               </div>
+            )}
+            <div className="modal-stat-divider" aria-hidden="true" />
+            <div className="modal-stat">
+              <span className="modal-stat-value">{post.source === 'library' ? post.creator || '—' : post.author}</span>
+              <span className="modal-stat-key">author</span>
+            </div>
+            <div className="modal-stat-divider" aria-hidden="true" />
+            <div className="modal-stat">
+              <span className="modal-stat-value">{formatPostDate(post.createdUtc)}</span>
+              <span className="modal-stat-key">posted</span>
+            </div>
+          </div>
+
+          <div className="modal-action-row">
+            <a
+              className="modal-cta"
+              href={post.permalink}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                <polyline points="15 3 21 3 21 9"/>
+                <line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
+              {primaryActionLabel}
+            </a>
+
+            {sourceActionHref && sourceActionHref !== post.permalink && (
+              <a className="modal-cta modal-cta-secondary" href={sourceActionHref} target="_blank" rel="noopener noreferrer">
+                {sourceActionLabel}
+              </a>
+            )}
+          </div>
+
+          <div className="modal-icon-row" role="toolbar" aria-label="Post actions">
+            {onToggleFavorite && (
+              <button
+                type="button"
+                className={`modal-icon-btn ${isFavorited ? 'active' : ''}`}
+                onClick={() => {
+                  const wasFavorited = isFavorited;
+                  onToggleFavorite(post);
+                  toast.show(wasFavorited ? 'Removed from favorites' : 'Saved to favorites');
+                }}
+                aria-pressed={isFavorited ? 'true' : 'false'}
+                aria-label={isFavorited ? 'Remove from favorites' : 'Save to favorites'}
+                title={isFavorited ? 'Remove from favorites' : 'Save to favorites'}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill={isFavorited ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.29 1.51 4.04 3 5.5l7 7Z"/>
+                </svg>
+                <span>Save</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              className="modal-icon-btn"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(post.permalink);
+                  toast.show('Link copied');
+                } catch {
+                  toast.show('Could not copy link', { variant: 'error' });
+                }
+              }}
+              aria-label="Copy post link"
+              title="Copy post link"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="9" y="9" width="13" height="13" rx="2"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+              <span>Copy</span>
+            </button>
+
+            <button
+              type="button"
+              className="modal-icon-btn"
+              onClick={async () => {
+                try {
+                  if (navigator.share) {
+                    await navigator.share({ title: post.title, url: post.permalink });
+                    return;
+                  }
+                  await navigator.clipboard.writeText(window.location.href);
+                  toast.show('Feed link copied');
+                } catch {}
+              }}
+              aria-label="Share"
+              title="Share"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="18" cy="5" r="3"/>
+                <circle cx="6" cy="12" r="3"/>
+                <circle cx="18" cy="19" r="3"/>
+                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
+                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+              </svg>
+              <span>Share</span>
+            </button>
+
+            {canDownload && (
+              <a className="modal-icon-btn" href={current.url} target="_blank" rel="noopener noreferrer" download aria-label="Download" title="Download">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="7 10 12 15 17 10"/>
+                  <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                <span>Save file</span>
+              </a>
+            )}
+
+            {canOpenAuthorGallery && (
+              <button type="button" className="modal-icon-btn" onClick={() => onOpenAuthorGallery(post)} aria-label="Author gallery" title="Author gallery">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                  <circle cx="12" cy="7" r="4"/>
+                </svg>
+                <span>Author</span>
+              </button>
             )}
           </div>
 
           {showComments && canShowComments && (
-            <section className="comments-panel" style={surfaceCardStyle}>
-              <div className="comments-panel-head">
-                <p className="preview-panel-label">Top Comments</p>
+            <section className="modal-card comments-panel">
+              <div className="modal-card-head">
+                <span className="modal-card-title">Top comments</span>
                 <button type="button" className="text-button" onClick={handleToggleComments}>Close</button>
               </div>
-              {commentsLoading && <p className="modal-helper-copy">Loading comments...</p>}
+              {commentsLoading && <p className="modal-helper-copy">Loading comments…</p>}
               {!commentsLoading && commentsError && <p className="modal-helper-copy">{commentsError}</p>}
-              {!commentsLoading && !commentsError && comments.length === 0 && <p className="modal-helper-copy">No readable comments returned for this post.</p>}
+              {!commentsLoading && !commentsError && comments.length === 0 && <p className="modal-helper-copy">No readable comments returned.</p>}
               {!commentsLoading && !commentsError && comments.length > 0 && (
                 <div className="comments-list">
                   {comments.map((comment) => (
@@ -806,68 +835,31 @@ function LightboxModal({
           )}
 
           {previewInfo && (
-            <section className="preview-panel" style={surfaceCardStyle}>
-              <p className="preview-panel-label">{previewInfo.label}</p>
-              <p>{previewInfo.copy}</p>
+            <section className="modal-card modal-card-accent">
+              <span className="modal-card-title">{previewInfo.label}</span>
+              <p className="modal-helper-copy">{previewInfo.copy}</p>
             </section>
           )}
 
-
-
           {post.flair && (
-            <div className="modal-note-block" style={surfaceCardStyle}>
-              <span className="modal-meta-label">Flair</span>
-              <p>{post.flair}</p>
+            <div className="modal-flair-row">
+              <span className="modal-flair-label">Flair</span>
+              <span className="modal-flair-value">{post.flair}</span>
             </div>
           )}
 
-
-
-          <section className="modal-note-block shortcuts-panel" style={surfaceCardStyle}>
-            <span className="modal-meta-label">Keyboard</span>
+          <details className="modal-shortcuts">
+            <summary>Keyboard shortcuts</summary>
             <div className="shortcut-hint-list">
               {keyboardHints.map((hint) => (
                 <span key={hint} className="shortcut-hint">{hint}</span>
               ))}
             </div>
-          </section>
+          </details>
 
-          <div className="modal-actions-column" style={actionsColumnStyle}>
-            <a
-              className={`modal-action-button ${needsRedditHandoff ? 'modal-action-primary' : ''}`}
-              href={post.permalink}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {primaryActionLabel}
-            </a>
-
-            {canDownload && (
-              <a className="modal-action-button" href={current.url} target="_blank" rel="noreferrer" download>
-                Download Direct Media
-              </a>
-            )}
-
-            <button
-              type="button"
-              className="modal-action-button"
-              onClick={async () => {
-                await navigator.clipboard.writeText(post.permalink);
-              }}
-            >
-              Copy Post Link
-            </button>
-
-            {canOpenAuthorGallery && (
-              <button type="button" className="modal-action-button" onClick={() => onOpenAuthorGallery(post)}>
-                Open Author Gallery
-              </button>
-            )}
-          </div>
-
-          <div className="modal-navigation-panel" style={navPanelStyle}>
-            {canNavigate && (
-              <div className="modal-post-nav" style={postNavStyle}>
+          <div className="modal-navigation-panel">
+            {false && canNavigate && (
+              <div className="modal-post-nav">
                 <button type="button" onClick={goPrevPost}>Previous Post</button>
                 <button type="button" onClick={goNextPost}>Next Post</button>
               </div>

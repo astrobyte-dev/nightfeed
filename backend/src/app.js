@@ -3,12 +3,13 @@ import cors from 'cors';
 import morgan from 'morgan';
 import subredditRouter from './routes/subreddit.js';
 import nsfwRouter from './routes/nsfw.js';
-import instagramRouter from './routes/instagram.js';
 import userRouter from './routes/user.js';
-import simpcityRouter from './routes/simpcity.js';
 import redditRouter from './routes/reddit.js';
 import mediaRouter from './routes/media.js';
 import externalRouter from './routes/external.js';
+import epornerRouter from './routes/eporner.js';
+import youtubeRouter from './routes/youtube.js';
+import coomerRouter from './routes/coomer.js';
 
 const app = express();
 
@@ -17,17 +18,18 @@ app.use(express.json());
 app.use(morgan('dev'));
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'subreddit-media-viewer-api' });
+  res.json({ ok: true, service: 'nightfeed-api' });
 });
 
 app.use('/api/subreddit', subredditRouter);
 app.use('/api/user', userRouter);
 app.use('/api/nsfw', nsfwRouter);
-app.use('/api/instagram', instagramRouter);
-app.use('/api/simpcity', simpcityRouter);
 app.use('/api/reddit', redditRouter);
 app.use('/api/media', mediaRouter);
 app.use('/api/external', externalRouter);
+app.use('/api/eporner', epornerRouter);
+app.use('/api/youtube', youtubeRouter);
+app.use('/api/coomer', coomerRouter);
 
 app.use((err, _req, res, _next) => {
   console.error(err);

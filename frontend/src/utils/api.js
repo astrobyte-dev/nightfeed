@@ -97,6 +97,80 @@ export async function fetchRedgifsMedia(id) {
   return response.json();
 }
 
+export async function fetchCoomerMedia({ query = '', after = null, type = 'video', sort = 'newest', limit = 36 } = {}) {
+  const url = new URL('/api/coomer/search', API_BASE_URL);
+  url.searchParams.set('q', query);
+  if (after) url.searchParams.set('after', after);
+  if (type) url.searchParams.set('type', type);
+  if (sort) url.searchParams.set('sort', sort);
+  url.searchParams.set('limit', String(limit));
+  const response = await fetch(url.toString());
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || 'Failed to fetch Coomer');
+  }
+  return response.json();
+}
+
+export async function fetchYouTubeMedia({ query = '', pageToken = null, order = 'relevance', limit = 25 } = {}) {
+  const url = new URL('/api/youtube/search', API_BASE_URL);
+  url.searchParams.set('q', query);
+  url.searchParams.set('order', order);
+  url.searchParams.set('limit', String(limit));
+  if (pageToken) url.searchParams.set('pageToken', pageToken);
+  const response = await fetch(url.toString());
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || 'Failed to fetch YouTube');
+  }
+  return response.json();
+}
+
+export async function fetchEpornerMedia({ query = 'all', page = 1, order = 'most-popular', perPage = 30, include = [], exclude = [], performers = [] } = {}) {
+  const url = new URL('/api/eporner/search', API_BASE_URL);
+  url.searchParams.set('q', query);
+  url.searchParams.set('page', String(page));
+  url.searchParams.set('order', order);
+  url.searchParams.set('per_page', String(perPage));
+  if (include.length) url.searchParams.set('include', include.join(','));
+  if (exclude.length) url.searchParams.set('exclude', exclude.join(','));
+  if (performers.length) url.searchParams.set('performers', performers.join(','));
+  const response = await fetch(url.toString());
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || 'Failed to fetch Eporner');
+  }
+  return response.json();
+}
+
+export async function fetchRelatedSubreddits(subreddit) {
+  if (!subreddit) return { items: [] };
+  const url = new URL(`/api/reddit/related/${encodeURIComponent(subreddit)}`, API_BASE_URL);
+  const response = await fetch(url.toString());
+  if (!response.ok) return { items: [] };
+  return response.json();
+}
+
+export async function searchSubreddits({ query, includeNsfw = true, limit = 12 } = {}) {
+  if (!query || query.trim().length < 2) return { items: [] };
+  const url = new URL('/api/reddit/search-subreddits', API_BASE_URL);
+  url.searchParams.set('q', query.trim());
+  url.searchParams.set('nsfw', includeNsfw ? '1' : '0');
+  url.searchParams.set('limit', String(limit));
+  const response = await fetch(url.toString());
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || 'Failed to search subreddits');
+  }
+  return response.json();
+}
+
+export function getRedgifsStreamUrl(id) {
+  if (!id) return null;
+  const url = new URL(`/api/external/redgifs/${encodeURIComponent(id)}/stream`, API_BASE_URL);
+  return url.toString();
+}
+
 export async function fetchRedditUserMedia({ username, sort = 'new', after, includeNsfw, limit = 40 }) {
   const url = new URL(`/api/user/${encodeURIComponent(username)}`, API_BASE_URL);
   url.searchParams.set('sort', sort);
@@ -108,186 +182,6 @@ export async function fetchRedditUserMedia({ username, sort = 'new', after, incl
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload.error || 'Failed to fetch user media');
-  }
-  return response.json();
-}
-
-export async function fetchInstagramMedia({ username, after, limit = 24 }) {
-  const url = new URL(`/api/instagram/${encodeURIComponent(username)}`, API_BASE_URL);
-  url.searchParams.set('limit', String(limit));
-  if (after) url.searchParams.set('after', after);
-
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || 'Failed to fetch Instagram media');
-  }
-  return response.json();
-}
-
-export async function fetchNewNsfwSubreddits(limit = 20) {
-  const url = new URL('/api/nsfw/new', API_BASE_URL);
-  url.searchParams.set('limit', String(limit));
-
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || 'Failed to fetch new NSFW subreddits');
-  }
-
-  return response.json();
-}
-
-export async function fetchSimpcityMedia({ path, query, after, limit = 18 }) {
-  const url = new URL('/api/simpcity/feed', API_BASE_URL);
-  if (path) url.searchParams.set('path', path);
-  if (query) url.searchParams.set('q', query);
-  if (after) url.searchParams.set('after', after);
-  url.searchParams.set('limit', String(limit));
-
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || 'Failed to fetch SimpCity media');
-  }
-
-  return response.json();
-}
-
-export async function fetchSimpcitySidebar() {
-  const url = new URL('/api/simpcity/sidebar', API_BASE_URL);
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || 'Failed to fetch SimpCity sidebar');
-  }
-  return response.json();
-}
-
-export async function fetchSimpcityTags(limit = 80) {
-  const url = new URL('/api/simpcity/tags', API_BASE_URL);
-  url.searchParams.set('limit', String(limit));
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || 'Failed to fetch SimpCity tags');
-  }
-  return response.json();
-}
-
-export async function fetchSimpcityThreads({ category = '', section = '', tag = '', author = '', search = '', after, limit = 24 }) {
-  const url = new URL('/api/simpcity/threads', API_BASE_URL);
-  if (category) url.searchParams.set('category', category);
-  if (section) url.searchParams.set('section', section);
-  if (tag) url.searchParams.set('tag', tag);
-  if (author) url.searchParams.set('author', author);
-  if (search) url.searchParams.set('search', search);
-  if (after) url.searchParams.set('after', after);
-  url.searchParams.set('limit', String(limit));
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || 'Failed to fetch SimpCity threads');
-  }
-  return response.json();
-}
-
-export async function fetchIndexedSimpcityMedia({ category = '', section = '', tag = '', author = '', search = '', mediaType = 'all', sourceHost = '', after, limit = 36 }) {
-  const url = new URL('/api/simpcity/media', API_BASE_URL);
-  if (category) url.searchParams.set('category', category);
-  if (section) url.searchParams.set('section', section);
-  if (tag) url.searchParams.set('tag', tag);
-  if (author) url.searchParams.set('author', author);
-  if (search) url.searchParams.set('search', search);
-  if (mediaType) url.searchParams.set('mediaType', mediaType);
-  if (sourceHost) url.searchParams.set('sourceHost', sourceHost);
-  if (after) url.searchParams.set('after', after);
-  url.searchParams.set('limit', String(limit));
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || 'Failed to fetch SimpCity media');
-  }
-  return response.json();
-}
-
-export async function fetchSimpcityThreadDetail(threadId) {
-  const url = new URL(`/api/simpcity/thread/${encodeURIComponent(threadId)}`, API_BASE_URL);
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || 'Failed to fetch SimpCity thread');
-  }
-  return response.json();
-}
-
-export async function triggerSimpcityCrawl({ threadLimitPerSection = 12, scope = 'manual' } = {}) {
-  const url = new URL('/api/simpcity/crawl', API_BASE_URL);
-  const response = await fetch(url.toString(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ threadLimitPerSection, scope })
-  });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || 'Failed to start SimpCity crawl');
-  }
-  return response.json();
-}
-
-export async function fetchMediaFeed({ after, limit = 24 } = {}) {
-  const url = new URL('/api/media/feed', API_BASE_URL);
-  if (after) url.searchParams.set('after', after);
-  url.searchParams.set('limit', String(limit));
-
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || 'Failed to fetch media feed');
-  }
-  return response.json();
-}
-
-export async function fetchMediaSearch({ search = '', creator = '', tag = '', type = 'all', sort = 'newest', after, limit = 24 } = {}) {
-  const url = new URL('/api/media/search', API_BASE_URL);
-  if (search) url.searchParams.set('q', search);
-  if (creator) url.searchParams.set('creator', creator);
-  if (tag) url.searchParams.set('tag', tag);
-  if (type) url.searchParams.set('type', type);
-  if (sort) url.searchParams.set('sort', sort);
-  if (after) url.searchParams.set('after', after);
-  url.searchParams.set('limit', String(limit));
-
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || 'Failed to search media');
-  }
-  return response.json();
-}
-
-export async function fetchMediaCreators({ search = '', service = '', type = 'all' } = {}) {
-  const url = new URL('/api/media/creators', API_BASE_URL);
-  if (search) url.searchParams.set('q', search);
-  if (service) url.searchParams.set('service', service);
-  if (type) url.searchParams.set('type', type);
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || 'Failed to fetch Coomer creators');
-  }
-  return response.json();
-}
-
-export async function fetchMediaTags({ search = '', creator = '', type = 'all' } = {}) {
-  const url = new URL('/api/media/tags', API_BASE_URL);
-  if (search) url.searchParams.set('q', search);
-  if (creator) url.searchParams.set('creator', creator);
-  if (type) url.searchParams.set('type', type);
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || 'Failed to fetch Coomer services');
   }
   return response.json();
 }

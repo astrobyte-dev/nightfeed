@@ -355,18 +355,35 @@ const VideoPlayer = forwardRef(function VideoPlayer(
 
     function tryAutoplay() {
       if (prebufferOnly || !autoPlay) return;
-      if (preferredMuted === true) {
-        video.muted = true;
-      } else if (preferredMuted === false || allowUnmutedAutoplay) {
-        video.muted = false;
+      // Always attempt unmuted first; the catch handler will mute and retry
+      // if the browser blocks unmuted autoplay (no prior user interaction).
+      video.muted = preferredMuted === true;
+
+      function attemptPlay() {
+        const playPromise = video.play();
+        if (playPromise?.catch) {
+          playPromise.catch(() => {
+            if (!video.muted) {
+              video.muted = true;
+              onMutedChange?.(true);
+              video.play().catch(() => {});
+            }
+          });
+        }
       }
-      const playPromise = video.play();
-      if (playPromise?.catch) {
-        playPromise.catch(() => {
-          video.muted = true;
-          onMutedChange?.(true);
-          video.play().catch(() => {});
-        });
+
+      if (video.readyState >= 2) {
+        attemptPlay();
+      } else {
+        const onReady = () => {
+          video.removeEventListener('canplay', onReady);
+          video.removeEventListener('loadeddata', onReady);
+          attemptPlay();
+        };
+        video.addEventListener('canplay', onReady, { once: true });
+        video.addEventListener('loadeddata', onReady, { once: true });
+        // Best-effort fallback: try anyway in case events already fired
+        attemptPlay();
       }
     }
 
@@ -375,17 +392,6 @@ const VideoPlayer = forwardRef(function VideoPlayer(
       if (isDev) console.log('[VideoPlayer] MP4 fallback');
       video.src = mp4Url;
       video.load();
-      if (directUrlOnly && reloadNonce === 0) {
-        updateDiagnostics({
-          playbackMode: 'mp4',
-          audioTracksDetected: 0,
-          currentSrc: mp4Url,
-          loadingState: 'idle',
-          autoplayAttempted: false,
-          awaitingUserAction: true
-        });
-        return;
-      }
 
       updateDiagnostics({
         playbackMode: 'mp4',
@@ -446,11 +452,11 @@ const VideoPlayer = forwardRef(function VideoPlayer(
 
       video.loop = loop && !prebufferOnly;
       video.preload = directUrlOnly || prebufferOnly ? 'metadata' : 'auto';
-      const shouldStartMuted = preferredMuted === null ? !allowUnmutedAutoplay : preferredMuted;
+      const shouldStartMuted = preferredMuted === true;
       video.defaultMuted = shouldStartMuted;
       video.muted = shouldStartMuted;
       video.playsInline = true;
-      video.autoplay = false;
+      video.autoplay = autoPlay && !prebufferOnly;
       video.controls = !prebufferOnly;
       video.poster = posterUrl || '';
 
@@ -537,28 +543,22 @@ const VideoPlayer = forwardRef(function VideoPlayer(
   const wrapperStyle = {
     width: '100%',
     minHeight: 0,
+    width: '100%',
     height: '100%',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: '26px',
-    background: posterUrl && directUrlOnly && !videoMetrics.ready
-      ? `linear-gradient(180deg, rgba(3, 7, 12, 0.24), rgba(3, 7, 12, 0.24)), url(${posterUrl}) center / cover no-repeat`
-      : 'transparent'
+    background: 'transparent'
   };
 
   const videoStyle = {
     display: 'block',
-    width: videoMetrics.isPortrait ? 'min(100%, 520px)' : 'min(100%, 900px)',
+    width: '100%',
+    height: '100%',
     maxWidth: '100%',
-    maxHeight: 'min(68vh, 760px)',
-    minHeight: videoMetrics.ready ? 0 : 520,
-    height: 'auto',
+    maxHeight: '100%',
     objectFit: 'contain',
-    borderRadius: '22px',
-    background: '#000',
-    boxShadow: '0 28px 80px rgba(0, 0, 0, 0.34)',
-    opacity: directUrlOnly && posterUrl && !videoMetrics.ready ? 0.98 : 1
+    background: 'transparent'
   };
 
   return (
