@@ -47,9 +47,6 @@ const VideoPlayer = forwardRef(function VideoPlayer(
   const hlsRef = useRef(null);
   const dashPlayerRef = useRef(null);
   const timeoutRef = useRef(null);
-  // TEMP issue 005 root-cause trace — remove after diagnosis
-  const effectRunCountRef = useRef(0);
-  const prevDepsRef = useRef(null);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [videoMetrics, setVideoMetrics] = useState({ ready: false, isPortrait: true });
   const directUrlOnly = Boolean(mp4Url && !hlsUrl && !dashUrl);
@@ -101,29 +98,6 @@ const VideoPlayer = forwardRef(function VideoPlayer(
   }), []);
 
   useEffect(() => {
-    // TEMP issue 005 root-cause trace — remove after diagnosis
-    effectRunCountRef.current += 1;
-    const currentDeps = {
-      mp4Url, hlsUrl, dashUrl, sanitizedCompanionAudioUrls, hasAudio, sourceKind,
-      posterUrl, autoPlay, loop, prebufferOnly, allowUnmutedAutoplay,
-      preferredMuted, onMutedChange, onDiagnostics, reloadNonce,
-      shouldUseCompanionAudio, directUrlOnly
-    };
-    if (prevDepsRef.current === null) {
-      console.log(`[VideoPlayer trace] effect run #${effectRunCountRef.current} (initial mount)`);
-    } else {
-      const prev = prevDepsRef.current;
-      const changed = {};
-      for (const k of Object.keys(currentDeps)) {
-        if (!Object.is(prev[k], currentDeps[k])) {
-          changed[k] = { from: prev[k], to: currentDeps[k] };
-        }
-      }
-      console.log(`[VideoPlayer trace] effect run #${effectRunCountRef.current} — changed deps:`, changed);
-    }
-    prevDepsRef.current = currentDeps;
-    // END TEMP
-
     const video = videoRef.current;
     const companionAudio = companionAudioRef.current;
     if (!video) return undefined;
