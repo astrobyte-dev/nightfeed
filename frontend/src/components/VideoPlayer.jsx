@@ -33,6 +33,7 @@ const VideoPlayer = forwardRef(function VideoPlayer(
     className,
     autoPlay = true,
     loop = true,
+    controls = true,
     prebufferOnly = false,
     allowUnmutedAutoplay = false,
     preferredMuted = null,
@@ -565,7 +566,7 @@ const VideoPlayer = forwardRef(function VideoPlayer(
     <div ref={wrapperRef} className="video-player-shell" style={wrapperStyle}>
       <video
         ref={videoRef}
-        controls
+        controls={controls}
         playsInline
         preload="metadata"
         className={className}
