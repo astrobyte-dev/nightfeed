@@ -51,4 +51,21 @@ describe('useMode', () => {
     expect(new URLSearchParams(window.location.search).get('mode')).toBeNull();
     expect(localStorage.getItem(MODE_KEY)).toBe('grid');
   });
+
+  it('writes URL synchronously inside setMode, not deferred to React commit', () => {
+    // Regression for React 18 Strict Mode bug: when history.pushState lived
+    // inside the setState updater function, it was a side effect that React
+    // would invoke twice and could mistime against the commit. The URL must
+    // change the moment setMode is called, before the React state update
+    // queue flushes.
+    const { result } = renderHook(() => useMode());
+
+    let urlInsideAct;
+    act(() => {
+      result.current.setMode('feed');
+      urlInsideAct = window.location.search;
+    });
+
+    expect(urlInsideAct).toContain('mode=feed');
+  });
 });

@@ -23,7 +23,15 @@ function buildUrl(params) {
 
 export function useMode() {
   const [mode, setModeState] = useState(readInitialMode);
+  const modeRef = useRef(mode);
   const gridScrollYRef = useRef(0);
+
+  // Defensive: keep the ref aligned with state in case state ever changes
+  // through a path other than setMode (it shouldn't, but the ref is the
+  // synchronous source of truth and we don't want it to drift).
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
 
   useEffect(() => {
     try {
@@ -64,27 +72,27 @@ export function useMode() {
 
   const setMode = useCallback((next) => {
     if (!VALID_MODES.has(next)) return;
-    setModeState((prev) => {
-      if (prev === next) return prev;
-      const params = new URLSearchParams(window.location.search);
-      if (next === 'feed') {
-        gridScrollYRef.current = window.scrollY;
-        params.set('mode', 'feed');
-        window.history.pushState(
-          { nightfeedMode: 'feed' },
-          '',
-          buildUrl(params)
-        );
-      } else {
-        params.delete('mode');
-        window.history.replaceState(
-          { ...window.history.state, nightfeedMode: 'grid' },
-          '',
-          buildUrl(params)
-        );
-      }
-      return next;
-    });
+    if (modeRef.current === next) return;
+
+    const params = new URLSearchParams(window.location.search);
+    if (next === 'feed') {
+      gridScrollYRef.current = window.scrollY;
+      params.set('mode', 'feed');
+      window.history.pushState(
+        { nightfeedMode: 'feed' },
+        '',
+        buildUrl(params)
+      );
+    } else {
+      params.delete('mode');
+      window.history.replaceState(
+        { ...window.history.state, nightfeedMode: 'grid' },
+        '',
+        buildUrl(params)
+      );
+    }
+    modeRef.current = next;
+    setModeState(next);
   }, []);
 
   return { mode, setMode };
