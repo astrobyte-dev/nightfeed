@@ -2,9 +2,9 @@
 
 How Claude / Copilot / a human contributor confirms a task is actually done. Read alongside `CLAUDE.md`.
 
-## The three layers
+## The four layers
 
-Nightfeed has three layers of confirmation, used in order. A task that only passes layer 1 is not done.
+Nightfeed has four layers of confirmation, used in order. A task that only passes layer 1 is not done.
 
 ### Layer 1 — Static checks
 
@@ -48,7 +48,35 @@ npm test                        # runs both via workspaces
 
 **Coverage target:** none. Coverage targets cause people to write tests for getters. Test what matters: branching logic, normalization, ranking, parsing, hooks with state.
 
-### Layer 3 — Manual smoke
+### Layer 3 — End-to-end (Playwright)
+
+```bash
+# At the repo root
+npm run test:e2e          # spins up backend + frontend, runs Playwright against headless Chromium
+```
+
+Playwright drives a real browser against the real dev stack so the suite can assert things unit tests cannot see: actual URL bar state after `history.pushState`, real DOM properties on `<video>` elements, and console / network symptoms of runaway effects. Tests live in `frontend/tests/e2e/*.spec.js` and run under two viewport projects (`chromium-desktop` and `chromium-mobile` via Pixel 5 emulation).
+
+**What gets an E2E test:**
+
+- Any acceptance criterion that is reasonably automatable in a desktop or emulated-mobile browser. Touch gestures, sound autoplay, and real-device behavior remain a human task in Layer 4.
+- Regressions for bugs that lint and unit tests missed. The 011 feed-mode and 005 RedGIFs-loop regressions are the v1 baseline.
+
+**What does not need an E2E test:**
+
+- Pure functions and hook unit behavior. That belongs in Layer 2.
+- Visual styling and color choices. Layer 4 (manual smoke) catches these.
+- Anything requiring a real S22 device, real touch gestures, or real audio autoplay. Layer 4.
+
+**Local run notes:**
+
+- The Playwright `webServer` config will start both `backend` and `frontend` dev servers if they aren't already running, and will reuse existing servers locally.
+- First run downloads ~300 MB of Chromium binaries via `npx playwright install chromium`. CI does this every run; locally it caches.
+- Playwright on Windows can be slow to detect "server ready." Timeouts are set to 120s. If a run hangs on startup, check both ports (5173 frontend, 3001 backend) are free.
+
+**CI:** the `e2e` job runs only on `pull_request` (not on every push) so the dev-loop push isn't slowed by browser downloads. It requires the `build` job to pass first. On failure, the Playwright HTML report and any video / screenshot artifacts are uploaded with 14-day retention.
+
+### Layer 4 — Manual smoke
 
 Open the app and click the thing you changed. Specifically:
 
