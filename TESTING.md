@@ -68,6 +68,19 @@ Playwright drives a real browser against the real dev stack so the suite can ass
 - Visual styling and color choices. Layer 4 (manual smoke) catches these.
 - Anything requiring a real S22 device, real touch gestures, or real audio autoplay. Layer 4.
 
+**Fixtures and stubs:**
+
+E2E tests stub Reddit and RedGIFs at the Playwright `page.route()` layer rather than hitting upstreams. The `stubBackend()` helper in `frontend/tests/e2e/_helpers.js` is the default; every spec calls it in `beforeEach`.
+
+- `/api/subreddit/**` returns the captured fixture at `frontend/tests/e2e/fixtures/subreddit-pics.json`.
+- `/api/external/redgifs/*` and `.../stream` return synthetic 200 responses so the lightbox can mount `VideoPlayer` and the loop test can count requests.
+
+Why: Reddit's anonymous-API rate limit makes unstubbed runs flake in CI after a couple of executions. Stubs decouple the suite from upstream content drift and rate limits and make assertions deterministic. Production backend code is untouched.
+
+The fixture includes a synthetic item with `externalVideoProvider: 'RedGIFs'` specifically so the 005 loop test has a RedGIFs surface to open. If a new test needs different content (a Reddit gallery, a v.redd.it native video, an audio post), extend the fixture; do not switch to real Reddit.
+
+**When to drop the stubs:** if a future test specifically needs to exercise the real upstream response shape (contract testing the real Reddit or RedGIFs API), drop the `stubBackend()` call in that spec's `beforeEach`. That's the explicit un-deviation procedure.
+
 **Local run notes:**
 
 - The Playwright `webServer` config will start both `backend` and `frontend` dev servers if they aren't already running, and will reuse existing servers locally.
