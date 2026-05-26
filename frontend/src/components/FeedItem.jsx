@@ -17,6 +17,7 @@ function FeedItem({ item }) {
           sourceKind={first.sourceKind}
           posterUrl={item?.thumbnail || ''}
           className="feed-item__video"
+          controls={false}
         />
       </div>
     );
