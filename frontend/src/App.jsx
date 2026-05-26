@@ -14,12 +14,15 @@ import RelatedSubsRow from './components/RelatedSubsRow';
 import SourceToggle from './components/SourceToggle';
 import AdvancedSearch, { DEFAULT_ADVANCED, QUALITY_THRESHOLDS, countActiveFilters } from './components/AdvancedSearch';
 import ActiveFiltersStrip from './components/ActiveFiltersStrip';
+import FeedMode from './components/FeedMode';
+import FeedExitGesture from './components/FeedExitGesture';
 import { ToastProvider, useToast } from './components/Toast';
 import { useFavorites } from './hooks/useFavorites';
 import { useSavedSubreddits } from './hooks/useSavedSubreddits';
 import { useHiddenAuthors } from './hooks/useBlockList';
 import { usePreferences } from './hooks/usePreferences';
 import { getInitialUrlState, useSyncUrlState } from './hooks/useUrlState';
+import { useMode } from './hooks/useMode';
 import {
   fetchRedditUserMedia,
   fetchSubredditMedia,
@@ -274,6 +277,8 @@ function AppShell() {
   }), [subreddit, authorView, sort, mediaFilter, order, redditFilters]);
 
   useSyncUrlState(urlState);
+
+  const { mode, setMode } = useMode();
 
   const currentSnapshot = useMemo(
     () => createFeedSnapshot({ subreddit, authorView, sort, includeNsfw, mediaFilter, order, redditFilters }),
@@ -786,6 +791,14 @@ function AppShell() {
     return { videos, images, audio, all: items.length };
   }, [items]);
 
+  if (mode === 'feed') {
+    return (
+      <FeedExitGesture onExit={() => setMode('grid')}>
+        <FeedMode items={displayItems} />
+      </FeedExitGesture>
+    );
+  }
+
   return (
     <div className="app-shell-beeg">
       <TopBar
@@ -826,6 +839,7 @@ function AppShell() {
         onBlueskySortChange={setBlueskySort}
         onOpenAdvanced={() => setAdvancedOpen(true)}
         advancedFilterCount={countActiveFilters(advanced)}
+        onEnterFeed={() => setMode('feed')}
       />
 
       {source === 'reddit' && (

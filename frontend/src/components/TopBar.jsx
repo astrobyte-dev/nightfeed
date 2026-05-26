@@ -93,7 +93,8 @@ function TopBar({
   blueskySort,
   onBlueskySortChange,
   onOpenAdvanced,
-  advancedFilterCount = 0
+  advancedFilterCount = 0,
+  onEnterFeed
 }) {
   const isEporner = source === 'eporner';
   const isBooru = source === 'booru';
@@ -187,6 +188,14 @@ function TopBar({
         {onThemeChange && (
           <button type="button" className="topbar-icon-btn" onClick={cycleTheme} aria-label={`Theme: ${theme}. Click to change.`} title={`Theme: ${theme}`}>
             <ThemeIcon theme={theme} />
+          </button>
+        )}
+        {onEnterFeed && (
+          <button type="button" className="topbar-icon-btn" onClick={onEnterFeed} aria-label="Enter feed mode" title="Enter feed">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="6" y="3" width="12" height="7" rx="1.5" />
+              <rect x="6" y="14" width="12" height="7" rx="1.5" />
+            </svg>
           </button>
         )}
       </div>

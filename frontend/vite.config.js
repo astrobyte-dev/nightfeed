@@ -1,9 +1,13 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import mkcert from 'vite-plugin-mkcert';
 import { fileURLToPath, URL } from 'node:url';
+import process from 'node:process';
+
+const useHttps = process.env.VITE_HTTPS === 'true';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), useHttps && mkcert()].filter(Boolean),
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url))

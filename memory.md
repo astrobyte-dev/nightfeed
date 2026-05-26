@@ -42,6 +42,15 @@ This file is for the human + the AI assistant. Keep entries dated. Newest at top
 
 Append-only. Newest at top.
 
+### 2026-05-26: Feed-mode shell shipped (issue 011)
+- **Single exit code path.** Esc keydown, leftmost-25px edge-swipe-right (dx > 60px, dy < 40px), and browser back all call `history.back()`. The popstate listener in `FeedExitGesture` detects the URL no longer has `mode=feed` and calls `setMode('grid')`. One convergence point; no double-handling.
+- **Cold-load history bootstrap.** When `useMode` initialises into feed mode directly from URL or localStorage (the current history entry was not pushed by us), the hook synthesises a grid history entry below the current one via `replaceState` + `pushState`. Guarantees browser back exits feed mode unconditionally.
+- **`FeedExitGesture` has no DOM.** Listeners attach to `window` so the edge-swipe registers regardless of which child receives the touch. The component is a behaviour-only Fragment wrapper.
+- **Item-kind discriminator is `getModalItems()` in `utils/media.js`.** Already exists for the lightbox; feed mode reuses it directly. Not duplicated, no new utility introduced.
+- **`VideoPlayer` untouched.** `FeedItem` passes `mp4Url/hlsUrl/dashUrl/hasAudio/sourceKind/posterUrl/className`. The existing `autoPlay=true`, `loop=true` defaults match feed-mode semantics.
+- **`feed.css` imported from `FeedMode.jsx` via Vite**, not from `styles.css`. `styles.css` stays off-limits.
+- **Followup flagged, not addressed:** sound autoplay-after-user-gesture across feed scrolls. The Enter-Feed button click is the unlock gesture per the initial plan; whether `VideoPlayer` needs adjustment to propagate that across siblings is a future investigation, likely under issue 014 or its own slice.
+
 ### 2026-05-26: `useUrlState` made composable (issue 011 prep)
 - **`useSyncUrlState` now preserves unknown URL params.** Previously it rebuilt the URL from scratch using only the keys in the state object it was given, silently stripping any param it didn't own. Discovered while planning feed-mode entry: `useMode` writing `?mode=feed` would have been clobbered by the next filter change. Fix is generic, not feed-mode-specific, and lives in its own commit ahead of the rest of issue 011.
 - **Regression test added** (`frontend/src/hooks/useUrlState.test.js`) covering: managed keys written, skipped values not written, pre-existing unknown params preserved, managed keys with skipped values removed if previously present.
