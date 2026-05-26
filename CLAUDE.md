@@ -117,9 +117,10 @@ A task is done when:
 2. **Tests written for new pure functions and hooks** (see `TESTING.md`).
 3. `npm run lint` is clean in any package you touched. (Once ESLint is added — see issue.)
 4. `npm test` passes in any package you touched.
-5. `npm run build` succeeds at the repo root.
-6. **You opened `http://localhost:5173` and clicked through the feature path you changed.** Even a 30-second smoke counts. Don't skip this.
-7. README and `memory.md` are updated if behavior, API, or open questions changed.
+5. **If the task touches acceptance criteria covered by E2E, the E2E test is updated or added** (see Layer 3 in `TESTING.md`), and `npm run test:e2e` passes locally.
+6. `npm run build` succeeds at the repo root.
+7. **You opened `http://localhost:5173` and clicked through the feature path you changed.** Even a 30-second smoke counts. Don't skip this.
+8. README and `memory.md` are updated if behavior, API, or open questions changed.
 
 ## What never to do without explicit user permission
 
@@ -150,6 +151,7 @@ Run through this list out loud (in chat) before saying a task is complete:
 - [ ] Acceptance criteria from the issue: all checked?
 - [ ] Tests added for new pure functions and hooks?
 - [ ] `npm test` clean in affected packages?
+- [ ] If the task touches acceptance criteria covered by E2E, the E2E spec is updated or added and `npm run test:e2e` passes?
 - [ ] `npm run build` clean at repo root?
 - [ ] Manually clicked the feature in a browser?
 - [ ] No file crossed its size guardrail?
