@@ -42,6 +42,22 @@ This file is for the human + the AI assistant. Keep entries dated. Newest at top
 
 Append-only. Newest at top.
 
+### 2026-05-26: Pattern — destructure-default-non-primitive-literal causes useMemo/useEffect dependency invalidation (issue 005)
+
+When a React component destructures a prop with a default value that is a non-primitive literal (`= []`, `= {}`, `= () => {}`, etc.), JavaScript evaluates that default expression on every function invocation. If the caller omits the prop, the destructure produces a brand-new reference every render. If that destructured value then feeds into a `useMemo` or `useEffect` dependency array, the consumer's `Object.is` check fails on every render and the memo factory or effect re-runs even though the semantic value is unchanged. Downstream `setState` calls in event handlers (e.g., `video.load()` firing `loadedmetadata` → `setVideoMetrics`) can close the loop and produce a runaway render cycle.
+
+**Caught in the wild as issue 005:** `frontend/src/components/VideoPlayer.jsx:28` had `companionAudioUrls = []`. `LightboxModal.jsx`'s RedGIFs embed branch and prebuffer branch both omitted the prop. The default produced a fresh `[]` per render. The downstream `useMemo` invalidated, `sanitizedCompanionAudioUrls` became a new reference each render, the 17-dep `useEffect` re-fired ~1500x/sec, and `video.load()` in the cleanup spammed cancelled requests at `/api/external/redgifs/:id/stream`. The regular `v.redd.it` HLS path was unaffected because `LightboxModal` did pass a memoised `companionAudioUrls` to that VideoPlayer.
+
+**Fix pattern:** hoist the default to a module-level `const`, so the default expression resolves to a single shared reference across all invocations. Example: `const EMPTY = []; ... function Foo({ items = EMPTY }) { ... }`.
+
+**Triage pattern when a similar render loop appears:**
+1. Add temporary instrumentation to the suspect `useEffect`: an effect-run counter plus an `Object.is`-based dep comparator that logs which deps changed between fires (see commit `6b4a0e9` for the canonical implementation). Tag the logs with a distinctive prefix so the console filter can isolate them.
+2. Reproduce the loop. Capture ~5s of console output. The unstable dep will be the one that appears in every "changed deps" entry.
+3. Trace the unstable dep back through any `useMemo` chain to its origin. If the origin is a destructured prop with a non-primitive default literal, you've hit this pattern.
+4. Hoist the default. Remove the instrumentation in a separate cleanup commit so the fix diff is readable on its own.
+
+**Grep this entry by `destructure-default-non-primitive` when triaging similar loops in the future.**
+
 ### 2026-05-26: `VideoPlayer.jsx` off-limits rule suspended narrowly (issue 011)
 - **Suspension is exactly two lines.** A `controls` prop with a `true` default in the destructure, and the literal `controls` attribute on the `<video>` element changed to `controls={controls}`. Nothing else in `VideoPlayer.jsx` was touched.
 - **Why suspend rather than work around.** The alternative was a CSS hack in `feed.css` using `::-webkit-media-controls` (and other vendor pseudos) to hide chrome. That couples feed-mode styling to Chromium's shadow DOM internals and would rot on engine updates. A real prop with a backwards-compatible default is structurally correct and reusable for the eventual feed-mode control row (issue 012) and any future surfaces that want chromeless playback.

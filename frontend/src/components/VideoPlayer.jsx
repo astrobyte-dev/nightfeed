@@ -3,6 +3,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 
 const isDev = import.meta.env.DEV;
 const DIRECT_LOAD_TIMEOUT_MS = 5000;
+const EMPTY_COMPANION_AUDIO_URLS = [];
 
 function logSourceInputs({ mp4Url, hlsUrl, dashUrl, hasAudio, sourceKind }) {
   if (!isDev) return;
@@ -25,7 +26,7 @@ const VideoPlayer = forwardRef(function VideoPlayer(
     mp4Url,
     hlsUrl,
     dashUrl,
-    companionAudioUrls = [],
+    companionAudioUrls = EMPTY_COMPANION_AUDIO_URLS,
     hasAudio = null,
     sourceKind = null,
     posterUrl = '',
