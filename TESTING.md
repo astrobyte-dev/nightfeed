@@ -1,0 +1,120 @@
+# TESTING.md
+
+How Claude / Copilot / a human contributor confirms a task is actually done. Read alongside `CLAUDE.md`.
+
+## The three layers
+
+Nightfeed has three layers of confirmation, used in order. A task that only passes layer 1 is not done.
+
+### Layer 1 — Static checks
+
+Cheap, fast, run on every change.
+
+```bash
+# At the repo root
+npm run lint            # ESLint, both packages
+npm run build           # Production build of the frontend
+```
+
+Lint must be **zero errors**. Warnings are acceptable but should not increase from main without justification.
+
+Build must succeed. A frontend build catches missing imports, syntax errors, and most "I forgot to export that" mistakes that the dev server tolerates.
+
+### Layer 2 — Automated tests
+
+```bash
+# Backend
+cd backend && npm test          # node:test, runs all *.test.js
+
+# Frontend
+cd frontend && npm test         # Vitest, runs all *.test.{js,jsx}
+
+# Or from the root:
+npm test                        # runs both via workspaces
+```
+
+**What gets a test:**
+
+- **Every new pure function** in `frontend/src/utils/` or `backend/src/utils/`. Pure means same input -> same output, no I/O.
+- **Every new custom hook** in `frontend/src/hooks/`. Use `@testing-library/react` with `renderHook`.
+- **Every new Express route** gets at least a happy-path test using `supertest` against the Express `app` (not the listening server).
+- **Source clients** (`backend/src/services/*Client.js`) get tested with mocked `fetch` for at least one success and one error path.
+
+**What does not need a test:**
+
+- React components that are purely presentational (props in, JSX out, no state). A snapshot is fine if you must, but don't reach for one.
+- One-line wrappers.
+- The `app.js` Express wiring file.
+
+**Coverage target:** none. Coverage targets cause people to write tests for getters. Test what matters: branching logic, normalization, ranking, parsing, hooks with state.
+
+### Layer 3 — Manual smoke
+
+Open the app and click the thing you changed. Specifically:
+
+1. `npm run dev` at the repo root.
+2. Open `http://localhost:5173`.
+3. Exercise the feature path end-to-end. Not the whole app, the specific path the task touched.
+4. If a backend route was added or changed, also `curl` it once and look at the JSON.
+
+You cannot skip this. The number of bugs that lint+test pass and manual smoke catches in five seconds is not small.
+
+## Mobile smoke (for any task that touches mobile UX)
+
+1. `npm run dev:lan` at the repo root.
+2. Find your laptop's LAN IP: `hostname -I` on Linux/Mac, `ipconfig` on Windows.
+3. On the phone, open `http://<laptop-ip>:5173`.
+4. Confirm the change behaves correctly with touch input on the actual S22.
+
+Tasks that affect gestures, the For-You / feed mode, autoplay, or layout below 480px **must** pass this step.
+
+## What to do when a test fails
+
+Apply root-cause tracing from `CLAUDE.md`:
+
+1. Reproduce locally.
+2. Isolate to the smallest failing case.
+3. Trace upstream until you have a one-sentence cause.
+4. Fix the cause, not the symptom.
+5. Confirm the fix doesn't break adjacent paths (re-run the full test for that package).
+
+If a test is failing because it's wrong (the code is correct, the test was bad), say so explicitly and update the test in the same change.
+
+## Setting all of this up (one-time)
+
+If lint/test commands don't exist yet (this is the case at plan creation), the very first task is to scaffold them. See `issues/010-scaffold-tooling.md`. **Do not start any other task until that issue is done.** Without the static + test layers, you cannot self-verify, and Claude/Copilot will go in circles.
+
+## What Claude/Copilot should report after a task
+
+A short, structured "done" message in this shape:
+
+```
+DONE: <one-line summary of what changed>
+
+Tests added:
+- frontend/src/.../foo.test.js
+- backend/src/.../bar.test.js
+
+Self-check:
+- lint: clean
+- npm test (frontend): X passed
+- npm test (backend): X passed
+- npm run build: clean
+- Manual smoke: opened http://localhost:5173, did <thing>, observed <thing>
+- File sizes: all within guardrails
+- memory.md updated: <yes/no, why>
+- README updated: <yes/no, why>
+
+Notes / followups (if any):
+- ...
+```
+
+No emoji. No "I hope this helps." Just the checklist.
+
+## Anti-patterns that fail review
+
+- "All tests pass" without saying which tests, or how many.
+- "I couldn't run the tests in my environment, but the change looks right." Then say that, ask for help running them, don't pretend.
+- "I added a TODO to write the test later." No. Write the test now or revert the change.
+- Skipping the manual smoke because "it's a small change."
+- Coercing a failing test into passing by changing the assertion to match the broken output.
