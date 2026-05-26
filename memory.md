@@ -42,6 +42,11 @@ This file is for the human + the AI assistant. Keep entries dated. Newest at top
 
 Append-only. Newest at top.
 
+### 2026-05-26: `VideoPlayer.jsx` off-limits rule suspended narrowly (issue 011)
+- **Suspension is exactly two lines.** A `controls` prop with a `true` default in the destructure, and the literal `controls` attribute on the `<video>` element changed to `controls={controls}`. Nothing else in `VideoPlayer.jsx` was touched.
+- **Why suspend rather than work around.** The alternative was a CSS hack in `feed.css` using `::-webkit-media-controls` (and other vendor pseudos) to hide chrome. That couples feed-mode styling to Chromium's shadow DOM internals and would rot on engine updates. A real prop with a backwards-compatible default is structurally correct and reusable for the eventual feed-mode control row (issue 012) and any future surfaces that want chromeless playback.
+- **Scope of the suspension.** Only for the prop. Pre-existing warnings in `VideoPlayer.jsx` (no-console, set-state-in-effect, exhaustive-deps, no-unused-vars) remain; they belong in that file's planned shrink, not in 011.
+
 ### 2026-05-26: Feed-mode shell shipped (issue 011)
 - **Single exit code path.** Esc keydown, leftmost-25px edge-swipe-right (dx > 60px, dy < 40px), and browser back all call `history.back()`. The popstate listener in `FeedExitGesture` detects the URL no longer has `mode=feed` and calls `setMode('grid')`. One convergence point; no double-handling.
 - **Cold-load history bootstrap.** When `useMode` initialises into feed mode directly from URL or localStorage (the current history entry was not pushed by us), the hook synthesises a grid history entry below the current one via `replaceState` + `pushState`. Guarantees browser back exits feed mode unconditionally.
