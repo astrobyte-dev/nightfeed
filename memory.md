@@ -42,6 +42,10 @@ This file is for the human + the AI assistant. Keep entries dated. Newest at top
 
 Append-only. Newest at top.
 
+### 2026-05-26: `useUrlState` made composable (issue 011 prep)
+- **`useSyncUrlState` now preserves unknown URL params.** Previously it rebuilt the URL from scratch using only the keys in the state object it was given, silently stripping any param it didn't own. Discovered while planning feed-mode entry: `useMode` writing `?mode=feed` would have been clobbered by the next filter change. Fix is generic, not feed-mode-specific, and lives in its own commit ahead of the rest of issue 011.
+- **Regression test added** (`frontend/src/hooks/useUrlState.test.js`) covering: managed keys written, skipped values not written, pre-existing unknown params preserved, managed keys with skipped values removed if previously present.
+
 ### 2026-05-26: Tooling scaffold (issue 010)
 - **Warn-baseline for ESLint on legacy code.** Rules existing code violates are downgraded to `warn` at the config level rather than refactored. Tightening to `error` belongs in a dedicated cleanup task, not 010. Specific downgrades: `no-empty` (allowEmptyCatch), `react-hooks/set-state-in-effect`, `react-hooks/immutability`, `react/no-unescaped-entities`, `no-constant-binary-expression`.
 - **`no-dupe-keys` stays strict.** The one duplicate `width` key in `VideoPlayer.jsx` was deleted by exception (one line, behavior-neutral, user-approved). Future dupe-key bugs will still be caught.

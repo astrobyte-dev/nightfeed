@@ -8,6 +8,12 @@ function readParams() {
   return out;
 }
 
+function isSkippedValue(v) {
+  if (v === undefined || v === null || v === '' || v === false) return true;
+  if (typeof v === 'number' && v === 0) return true;
+  return false;
+}
+
 export function getInitialUrlState() {
   return readParams();
 }
@@ -16,11 +22,13 @@ export function useSyncUrlState(state) {
   const lastWritten = useRef('');
 
   useEffect(() => {
-    const params = new URLSearchParams();
+    const params = new URLSearchParams(window.location.search);
     for (const [k, v] of Object.entries(state)) {
-      if (v === undefined || v === null || v === '' || v === false) continue;
-      if (typeof v === 'number' && v === 0) continue;
-      params.set(k, String(v));
+      if (isSkippedValue(v)) {
+        params.delete(k);
+      } else {
+        params.set(k, String(v));
+      }
     }
     const search = params.toString();
     if (search === lastWritten.current) return;
